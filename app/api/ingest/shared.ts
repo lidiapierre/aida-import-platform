@@ -199,6 +199,8 @@ export const SAFE_TRANSFORMS: Record<string, (value: any) => any> = {
         .replace(/⅜/g, '.375')
         .replace(/⅝/g, '.625')
         .replace(/⅞/g, '.875')
+        // normalize ASCII double tick inches like 32'' to a single double-quote
+        .replace(/''/g, '"')
         // normalize prime symbols for inches
         .replace(/″/g, '"')
         .replace(/′/g, "'")
