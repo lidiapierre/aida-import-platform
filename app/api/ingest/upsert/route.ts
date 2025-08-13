@@ -42,6 +42,7 @@ export async function POST(req: NextRequest) {
 
     const BATCH_SIZE = 500
     let insertedTotal = 0
+    const insertedIds: Array<string> = []
 
     // Simply insert all model rows; no conflict handling
     for (let i = 0; i < modelRows.length; i += BATCH_SIZE) {
@@ -54,6 +55,9 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ success: false, message: `Models insert failed: ${error.message}` }, { status: 500 })
       }
       insertedTotal += data?.length || 0
+      for (const row of data || []) {
+        if (row?.id != null) insertedIds.push(String(row.id))
+      }
     }
 
     // Fetch ids for all models of this data_source to link media and agencies
@@ -64,12 +68,12 @@ export async function POST(req: NextRequest) {
     if (fetchErr) {
       return NextResponse.json({ success: false, message: `Failed to fetch models for linking: ${fetchErr.message}` }, { status: 500 })
     }
-    const keyToId = new Map<string, number>(
+    const keyToId = new Map<string, any>(
       (modelsForSource || []).map((m: any) => [`${m.model_name}||${m.data_source}`, m.id])
     )
 
     // Prepare media rows
-    const mediaRows: { model_id: number; link: string }[] = []
+    const mediaRows: { model_id: any; link: string }[] = []
     for (const t of transformed) {
       const links = t.models_media || []
       if (!links.length) continue
@@ -147,12 +151,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         success: true,
         message: `Upsert complete: models ${insertedTotal}/${modelRows.length}, media ${mediaInserted}, agency linking ${agenciesLinked > 0 ? 'succeeded' : agenciesPlanned > 0 ? 'skipped/duplicate' : 'skipped'}`,
+        data: { modelIds: insertedIds }
       })
     }
 
     return NextResponse.json({
       success: true,
       message: `Upsert complete: models ${insertedTotal}/${modelRows.length}, media ${mediaInserted}, agency linking skipped`,
+      data: { modelIds: insertedIds }
     })
   } catch (e: any) {
     return NextResponse.json({ success: false, message: e?.message || 'Internal error' }, { status: 500 })

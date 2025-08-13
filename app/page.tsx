@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { Upload, FileText, CheckCircle, AlertCircle, Loader2, Plus, Globe } from 'lucide-react'
 
 interface UploadResponse {
@@ -27,6 +27,13 @@ export default function Home() {
   const [showAgencyCreateForm, setShowAgencyCreateForm] = useState<boolean>(false)
   const [feedback, setFeedback] = useState<string>('')
   const [isRegenerating, setIsRegenerating] = useState<boolean>(false)
+  // CV inference state
+  const [pendingModelIds, setPendingModelIds] = useState<Array<string | number>>([])
+  const [showCvPrompt, setShowCvPrompt] = useState<boolean>(false)
+  const [isInferring, setIsInferring] = useState<boolean>(false)
+  const [inferenceLogs, setInferenceLogs] = useState<Array<{ modelId: string | number; success: boolean; status: number; data: any }>>([])
+  const cancelCvRef = useRef<boolean>(false)
+  const abortControllerRef = useRef<AbortController | null>(null)
 
   const handleFileSelect = useCallback((selectedFile: File) => {
     if (selectedFile.type === 'text/csv' || selectedFile.name.endsWith('.csv')) {
@@ -230,12 +237,66 @@ export default function Home() {
         message: json?.message || (json?.success ? 'Upsert complete.' : 'Upsert failed.'),
         data: json?.data
       })
+
+      if (json?.success && Array.isArray(json?.data?.modelIds)) {
+        setPendingModelIds(json.data.modelIds)
+        setShowCvPrompt(true)
+      }
     } catch (e) {
       setUploadResult({ success: false, message: 'Upsert failed due to network or server error.' })
     } finally {
       setIsConfirming(false)
     }
   }
+
+  const runCvInference = useCallback(async () => {
+    if (!pendingModelIds.length) return
+    setIsInferring(true)
+    setInferenceLogs([])
+    cancelCvRef.current = false
+
+    for (const id of pendingModelIds) {
+      if (cancelCvRef.current) break
+      try {
+        const controller = new AbortController()
+        abortControllerRef.current = controller
+        const resp = await fetch('/api/ingest/cv-infer', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model_id: id }),
+          signal: controller.signal,
+        })
+        const json = await resp.json()
+        setInferenceLogs((prev) => [
+          ...prev,
+          {
+            modelId: id,
+            success: json?.success ?? resp.ok,
+            status: json?.status ?? resp.status,
+            data: json?.data ?? null,
+          },
+        ])
+      } catch (e: any) {
+        const aborted = e?.name === 'AbortError'
+        setInferenceLogs((prev) => [
+          ...prev,
+          { modelId: id, success: false, status: 0, data: { error: aborted ? 'aborted' : (e?.message || 'network error') } },
+        ])
+        if (cancelCvRef.current) break
+      } finally {
+        abortControllerRef.current = null
+      }
+    }
+
+    setIsInferring(false)
+  }, [pendingModelIds])
+
+  const cancelCvInference = useCallback(() => {
+    cancelCvRef.current = true
+    try {
+      abortControllerRef.current?.abort()
+    } catch {}
+  }, [])
 
   const handleRegenerate = async () => {
     if (!file) return
@@ -585,13 +646,83 @@ export default function Home() {
                   {uploadResult.message}
                 </p>
               </div>
-              {uploadResult.data && (
-                <div className="mt-3 text-xs">
-                  <pre className="whitespace-pre-wrap">
-                    {JSON.stringify(uploadResult.data, null, 2)}
-                  </pre>
+              {(() => {
+                if (!uploadResult.data) return null
+                // Hide modelIds on success
+                const dataToShow = uploadResult.success
+                  ? (() => {
+                      const { modelIds, ...rest } = uploadResult.data || {}
+                      return Object.keys(rest || {}).length ? rest : null
+                    })()
+                  : uploadResult.data
+                if (!dataToShow) return null
+                return (
+                  <div className="mt-3 text-xs">
+                    <pre className="whitespace-pre-wrap">
+                      {JSON.stringify(dataToShow, null, 2)}
+                    </pre>
+                  </div>
+                )
+              })()}
+            </div>
+          )}
+
+          {/* CV inference prompt */}
+          {showCvPrompt && pendingModelIds.length > 0 && !isInferring && (
+            <div className="mt-6 p-4 rounded-md bg-yellow-50 border border-yellow-200">
+              <div className="text-sm text-yellow-800">
+                Upsert completed. Proceed to CV inference for {pendingModelIds.length} models?
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowCvPrompt(false)
+                    runCvInference()
+                  }}
+                  className="w-full py-2 px-4 rounded-md text-sm font-medium text-white bg-yellow-600 hover:bg-yellow-700"
+                >
+                  Yes, start CV inference
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowCvPrompt(false)}
+                  className="w-full py-2 px-4 rounded-md text-sm font-medium text-yellow-700 bg-yellow-100 hover:bg-yellow-200"
+                >
+                  No, not now
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* CV inference progress and logs */}
+          {isInferring && (
+            <div className="mt-6 p-4 rounded-md bg-indigo-50 border border-indigo-200">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-medium text-indigo-800">
+                  Running CV inference ({inferenceLogs.length}/{pendingModelIds.length})
                 </div>
-              )}
+                <button
+                  type="button"
+                  onClick={cancelCvInference}
+                  className="text-xs text-indigo-700 hover:text-indigo-900"
+                >
+                  Cancel
+                </button>
+              </div>
+              <div className="mt-2 flex items-center text-xs text-indigo-700">
+                <Loader2 className="animate-spin h-4 w-4 mr-2" /> Processing...
+              </div>
+              <div className="mt-3 max-h-64 overflow-auto text-xs">
+                {inferenceLogs.map((log) => (
+                  <div key={`${log.modelId}`} className={`mb-2 p-2 rounded border ${log.success ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
+                    <div className="font-semibold">model_id {String(log.modelId)} • status {log.status} • {log.success ? 'success' : 'failed'}</div>
+                    <pre className="whitespace-pre-wrap mt-1">
+                      {JSON.stringify(log.data, null, 2)}
+                    </pre>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>

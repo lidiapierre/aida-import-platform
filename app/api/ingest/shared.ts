@@ -3,6 +3,7 @@ import { z } from 'zod'
 
 export const MODELS_FIELDS = {
   model_name: { type: 'text' },
+  profile_url: { type: 'url', description: "The model's profile URL" },
   min_estimated_age: { type: 'numeric', description: "The model's minimum estimated age in years" },
   max_estimated_age: { type: 'numeric', description: "The model's maximum estimated age in years" },
   min_height: { type: 'numeric', description: "The model's minimum height in centimeters (cm)" },
