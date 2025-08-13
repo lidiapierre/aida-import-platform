@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { MappingSchema, parseCsvAll, applyMappingToRow } from '../shared'
+import { MappingSchema, parseCsvAll, applyMappingToRow, MODELS_FIELDS } from '../shared'
 import { inferGenderFromFilename, inferModelBoardFromFilename } from '../shared'
 
 export async function POST(req: NextRequest) {
@@ -19,7 +19,10 @@ export async function POST(req: NextRequest) {
     const { rows } = await parseCsvAll(file)
 
     const dataSource = (file as any).name || 'upload.csv'
-    const inferredGender = inferGenderFromFilename(dataSource)
+    const providedGenderRaw = String(formData.get('gender') || '').trim()
+    const allowedGenders = (MODELS_FIELDS as any).gender.values as string[]
+    const providedGender = allowedGenders.includes(providedGenderRaw) ? providedGenderRaw : null
+    const inferredGender = providedGender || inferGenderFromFilename(dataSource)
     if (!inferredGender) {
       return NextResponse.json({ success: false, message: 'Could not infer gender from filename. Include a clear indicator such as girls, boys, men, women, female, male, transgender, non-binary, transman, or transwoman.' }, { status: 400 })
     }
@@ -93,31 +96,57 @@ export async function POST(req: NextRequest) {
 
     // Optionally insert model-agency relationships
     let agenciesLinked = 0
-    const agencyId = agencyIdStr ? Number(agencyIdStr) : null
-    if (agencyId && Number.isFinite(agencyId)) {
-      const relRows: { model_id: number; agency_id: number }[] = []
+    const agencyId = agencyIdStr ? (agencyIdStr as any) : null
+    if (agencyId) {
+      const relRows: { model_id: number; agency_id: any }[] = []
       for (const t of transformed) {
         const key = `${t.models.model_name}||${t.models.data_source}`
         const id = keyToId.get(key)
         if (!id) continue
         relRows.push({ model_id: id, agency_id: agencyId })
       }
+
+      let agencyJoinTableUsed: string | null = null
+      let agencyTable = 'models_agencies'
+      let triedFallback = false
+
       for (let i = 0; i < relRows.length; i += BATCH_SIZE) {
         const batch = relRows.slice(i, i + BATCH_SIZE)
-        const { data, error } = await supabase
-          .from('model_agencies')
-          .insert(batch)
-          .select('model_id,agency_id')
-        if (error) {
-          return NextResponse.json({ success: false, message: `Model-agency insert failed: ${error.message}` }, { status: 500 })
+        let data, error
+
+        // Try primary table name
+        ;({ data, error } = await supabase
+          .from(agencyTable)
+          .upsert(batch, { onConflict: 'model_id,agency_id' })
+          .select('model_id,agency_id'))
+
+        // Fallback to alternate table name on first error
+        if (error && !triedFallback) {
+          agencyTable = 'model_agencies'
+          triedFallback = true
+          ;({ data, error } = await supabase
+            .from(agencyTable)
+            .upsert(batch, { onConflict: 'model_id,agency_id' })
+            .select('model_id,agency_id'))
         }
-        agenciesLinked += data?.length || 0
+
+        if (error) {
+          return NextResponse.json({ success: false, message: `Model-agency upsert failed: ${error.message}`, data: { code: (error as any).code } }, { status: 500 })
+        }
+        if (!agencyJoinTableUsed) agencyJoinTableUsed = agencyTable
+        agenciesLinked += (data as any)?.length || 0
       }
+
+      return NextResponse.json({
+        success: true,
+        message: `Upsert complete: models ${insertedTotal}/${modelRows.length}, media ${mediaInserted}, agency linking ${agenciesLinked > 0 ? 'succeeded' : relRows.length > 0 ? 'failed' : 'skipped'} (${agenciesLinked})`,
+        data: { modelsProcessed: modelRows.length, modelsInserted: insertedTotal, mediaInserted, agenciesLinked, agenciesPlanned: relRows.length, agencyJoinTableUsed, agencyIdReceived: agencyIdStr },
+      })
     }
 
     return NextResponse.json({
       success: true,
-      message: 'Upsert complete',
+      message: `Upsert complete: models ${insertedTotal}/${modelRows.length}, media ${mediaInserted}, agency linking skipped (0)`,
       data: { modelsProcessed: modelRows.length, modelsInserted: insertedTotal, mediaInserted, agenciesLinked },
     })
   } catch (e: any) {

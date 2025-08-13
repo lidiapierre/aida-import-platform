@@ -329,15 +329,37 @@ export function inferGenderFromFilename(fileName: string): string | null {
 }
 
 export function inferModelBoardFromFilename(fileName: string): string | null {
-  const { underscored } = normalizeFilenameForSearch(fileName)
+  const { underscored, tokens } = normalizeFilenameForSearch(fileName)
   const bounded = (t: string) => new RegExp(`(^|_)${t}(_|$)`).test(underscored)
+  const has = (t: string) => tokens.has(t)
+  const hasAll = (...ts: string[]) => ts.every((x) => tokens.has(x))
+
+  // Composite phrase handling (split words found anywhere)
+  if (hasAll('new', 'face') || hasAll('new', 'faces')) return 'a_new_face'
+  if (hasAll('main', 'board')) return 'mainboard'
+  if (hasAll('big', 'and', 'tall')) return 'big_and_tall'
+  if (hasAll('x', 'division')) return 'non_binary_aka_x_division'
+  if (hasAll('non', 'binary')) return 'non_binary_aka_x_division'
+
+  const expandVariants = (t: string): string[] => {
+    const variants = new Set<string>()
+    const u = t.replace(/-/g, '_')
+    variants.add(u)
+    // plural forms
+    if (!u.endsWith('s')) variants.add(u + 's')
+    if (u.endsWith('y')) variants.add(u.slice(0, -1) + 'ies')
+    if (/^(?:.*(?:s|x|ch|sh))$/.test(u)) variants.add(u + 'es')
+    // collapsed (no separators) for filenames that concatenate
+    variants.add(u.replace(/_/g, ''))
+    return Array.from(variants)
+  }
 
   const candidates: Array<{ value: string; tokens: string[] }> = [
     { value: 'image', tokens: ['image'] },
-    { value: 'mainboard', tokens: ['mainboard'] },
-    { value: 'a_new_face', tokens: ['a_new_face', 'new_face', 'newface'] },
+    { value: 'mainboard', tokens: ['mainboard', 'main_board'] },
+    { value: 'a_new_face', tokens: ['a_new_face', 'new_face', 'new_faces', 'newface', 'newfaces'] },
     { value: 'development', tokens: ['development'] },
-    { value: 'non_binary_aka_x_division', tokens: ['non_binary_aka_x_division', 'x_division', 'x-division', 'non_binary', 'non-binary', 'nonbinary', 'nb'] },
+    { value: 'non_binary_aka_x_division', tokens: ['non_binary_aka_x_division', 'x_division', 'non_binary', 'non-binary', 'nonbinary', 'nb'] },
     { value: 'direct', tokens: ['direct'] },
     { value: 'youth', tokens: ['youth'] },
     { value: 'classic', tokens: ['classic'] },
@@ -360,8 +382,8 @@ export function inferModelBoardFromFilename(fileName: string): string | null {
   ]
 
   for (const c of candidates) {
-    for (const t of c.tokens) {
-      if (bounded(t)) return c.value
+    for (const t of c.tokens.flatMap(expandVariants)) {
+      if (bounded(t) || has(t) || bounded(t.replace(/_/g, ''))) return c.value
     }
   }
   return null

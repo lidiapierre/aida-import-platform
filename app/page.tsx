@@ -20,6 +20,8 @@ export default function Home() {
   const [agencySuggestions, setAgencySuggestions] = useState<any[] | null>(null)
   const [proposedAgency, setProposedAgency] = useState<any | null>(null)
   const [selectedAgencyId, setSelectedAgencyId] = useState<number | null>(null)
+  const [selectedGender, setSelectedGender] = useState<string | null>(null)
+  const [showGenderPicker, setShowGenderPicker] = useState<boolean>(false)
   const [isSuggestingAgency, setIsSuggestingAgency] = useState(false)
   const [creatingAgency, setCreatingAgency] = useState<boolean>(false)
   const [createAgencyError, setCreateAgencyError] = useState<string | null>(null)
@@ -34,6 +36,23 @@ export default function Home() {
       setAgencySuggestions(null)
       setProposedAgency(null)
       setShowAgencyCreateForm(false)
+      // naive client-side gender inference from filename for UX
+      const lower = selectedFile.name.toLowerCase()
+      const guess = /transman|trans_man/.test(lower)
+        ? 'transman'
+        : /transwoman|trans_woman/.test(lower)
+        ? 'transwoman'
+        : /transgender|\btrans\b/.test(lower)
+        ? 'transgender'
+        : /(non[-_\s]?binary|\bnb\b|x[-_\s]?division|enby)/.test(lower)
+        ? 'non-binary'
+        : /(female|women|womens|woman|womxn|girls|girl|ladies|lady)/.test(lower)
+        ? 'female'
+        : /(male|men|mens|man|boys|boy|guys|gentlemen|gentleman|gents)/.test(lower)
+        ? 'male'
+        : null
+      setSelectedGender(guess)
+      setShowGenderPicker(!guess)
     } else {
       setUploadResult({
         success: false,
@@ -141,6 +160,10 @@ export default function Home() {
       setUploadResult({ success: false, message: 'Please select or create an agency before continuing.' })
       return
     }
+    if (!selectedGender) {
+      setUploadResult({ success: false, message: 'Please select a gender before continuing.' })
+      return
+    }
 
     setIsUploading(true)
     setUploadResult(null)
@@ -148,6 +171,7 @@ export default function Home() {
     try {
       const formData = new FormData()
       formData.append('file', file)
+      if (selectedGender) formData.append('gender', selectedGender)
 
       // Step 1: ask server to parse a sample and get agent-proposed mapping preview
       const previewResp = await fetch('/api/ingest/preview', {
@@ -180,12 +204,17 @@ export default function Home() {
 
   const handleConfirm = async () => {
     if (!file || !preview) return
+    if (!selectedGender) {
+      setUploadResult({ success: false, message: 'Please select a gender before upserting.' })
+      return
+    }
     setIsConfirming(true)
 
     try {
       const formData = new FormData()
       formData.append('file', file)
       formData.append('mapping', JSON.stringify(preview.mapping))
+      if (selectedGender) formData.append('gender', selectedGender)
       if (selectedAgencyId != null) formData.append('agency_id', String(selectedAgencyId))
 
       const resp = await fetch('/api/ingest/upsert', {
@@ -402,6 +431,43 @@ export default function Home() {
               )}
             </div>
 
+            {/* Gender selection */}
+            {selectedGender && !showGenderPicker ? (
+              <div className="space-y-2 mt-4">
+                <div className="text-sm text-gray-700">
+                  Gender: <span className="font-medium">{selectedGender}</span>
+                  <button
+                    type="button"
+                    onClick={() => setShowGenderPicker(true)}
+                    className="ml-2 text-xs text-blue-600 hover:text-blue-800"
+                  >
+                    Change
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-2 mt-4">
+                <label className="block text-sm font-medium text-gray-700">Gender</label>
+                <select
+                  className="w-full border rounded px-2 py-2 text-sm"
+                  value={selectedGender || ''}
+                  onChange={(e) => {
+                    const v = e.target.value || null
+                    setSelectedGender(v)
+                    if (v) setShowGenderPicker(false)
+                  }}
+                >
+                  <option value="">Select gender…</option>
+                  <option value="female">female</option>
+                  <option value="male">male</option>
+                  <option value="transgender">transgender</option>
+                  <option value="non-binary">non-binary</option>
+                  <option value="transman">transman</option>
+                  <option value="transwoman">transwoman</option>
+                </select>
+              </div>
+            )}
+
             {/* Submit Button */}
             <button
               type="submit"
@@ -471,7 +537,7 @@ export default function Home() {
                   {uploadResult.message}
                 </p>
               </div>
-              {!uploadResult.success && uploadResult.data && (
+              {uploadResult.data && (
                 <div className="mt-3 text-xs">
                   <pre className="whitespace-pre-wrap">
                     {JSON.stringify(uploadResult.data, null, 2)}

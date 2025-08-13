@@ -156,7 +156,13 @@ export async function POST(req: NextRequest) {
     const formData = await req.formData()
     const file = formData.get('file') as unknown as File
     const dataSourceName = (file as any)?.name || 'upload.csv'
-    const inferredGender = inferGenderFromFilename(dataSourceName)
+    
+    // Allow client override for gender if provided
+    const providedGenderRaw = String(formData.get('gender') || '').trim()
+    const allowedGenders = (MODELS_FIELDS as any).gender.values as string[]
+    const providedGender = allowedGenders.includes(providedGenderRaw) ? providedGenderRaw : null
+
+    const inferredGender = providedGender || inferGenderFromFilename(dataSourceName)
     const inferredModelBoard = inferModelBoardFromFilename(dataSourceName)
 
     if (!file) {
