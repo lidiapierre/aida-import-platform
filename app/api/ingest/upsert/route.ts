@@ -98,49 +98,56 @@ export async function POST(req: NextRequest) {
     let agenciesLinked = 0
     const agencyId = agencyIdStr ? (agencyIdStr as any) : null
     if (agencyId) {
-      const relRows: { model_id: number; agency_id: any }[] = []
+      const relRows: { model_id: any; agency_id: any }[] = []
       for (const t of transformed) {
         const key = `${t.models.model_name}||${t.models.data_source}`
         const id = keyToId.get(key)
         if (!id) continue
-        relRows.push({ model_id: id, agency_id: agencyId })
+        relRows.push({ model_id: id as any, agency_id: agencyId })
       }
 
-      let agencyJoinTableUsed: string | null = null
-      let agencyTable = 'models_agencies'
-      let triedFallback = false
+      // Deduplicate by model_id to avoid redundant inserts
+      const modelIds = Array.from(new Set(relRows.map((r) => r.model_id))).filter(Boolean)
 
-      for (let i = 0; i < relRows.length; i += BATCH_SIZE) {
-        const batch = relRows.slice(i, i + BATCH_SIZE)
-        let data, error
+      // Fetch existing links for this agency to skip duplicates without relying on DB constraints
+      const { data: existingLinks, error: existingErr } = await supabase
+        .from('models_agencies')
+        .select('model_id')
+        .eq('agency_id', agencyId)
+        .in('model_id', modelIds)
 
-        // Try primary table name
-        ;({ data, error } = await supabase
-          .from(agencyTable)
-          .upsert(batch, { onConflict: 'model_id,agency_id' })
-          .select('model_id,agency_id'))
+      if (existingErr) {
+        return NextResponse.json(
+          { success: false, message: `Model-agency precheck failed: ${existingErr.message || 'unknown error'}`, data: { code: (existingErr as any).code, details: (existingErr as any).details, hint: (existingErr as any).hint } },
+          { status: 500 }
+        )
+      }
 
-        // Fallback to alternate table name on first error
-        if (error && !triedFallback) {
-          agencyTable = 'model_agencies'
-          triedFallback = true
-          ;({ data, error } = await supabase
-            .from(agencyTable)
-            .upsert(batch, { onConflict: 'model_id,agency_id' })
-            .select('model_id,agency_id'))
-        }
+      const existingSet = new Set((existingLinks || []).map((e: any) => e.model_id))
+      const toInsert = relRows.filter((r) => !existingSet.has(r.model_id))
+      const agenciesPlanned = relRows.length
+      const agenciesAlreadyLinked = relRows.length - toInsert.length
 
+      // Insert only new links
+      for (let i = 0; i < toInsert.length; i += BATCH_SIZE) {
+        const batch = toInsert.slice(i, i + BATCH_SIZE)
+        const { data, error } = await supabase
+          .from('models_agencies')
+          .insert(batch)
+          .select('model_id,agency_id')
         if (error) {
-          return NextResponse.json({ success: false, message: `Model-agency upsert failed: ${error.message}`, data: { code: (error as any).code } }, { status: 500 })
+          return NextResponse.json(
+            { success: false, message: `Model-agency insert failed: ${error.message || 'unknown error'}`, data: { code: (error as any).code, details: (error as any).details, hint: (error as any).hint } },
+            { status: 500 }
+          )
         }
-        if (!agencyJoinTableUsed) agencyJoinTableUsed = agencyTable
-        agenciesLinked += (data as any)?.length || 0
+        agenciesLinked += data?.length || 0
       }
 
       return NextResponse.json({
         success: true,
-        message: `Upsert complete: models ${insertedTotal}/${modelRows.length}, media ${mediaInserted}, agency linking ${agenciesLinked > 0 ? 'succeeded' : relRows.length > 0 ? 'failed' : 'skipped'} (${agenciesLinked})`,
-        data: { modelsProcessed: modelRows.length, modelsInserted: insertedTotal, mediaInserted, agenciesLinked, agenciesPlanned: relRows.length, agencyJoinTableUsed, agencyIdReceived: agencyIdStr },
+        message: `Upsert complete: models ${insertedTotal}/${modelRows.length}, media ${mediaInserted}, agency linking ${agenciesLinked > 0 ? 'succeeded' : agenciesPlanned > 0 ? 'skipped/duplicate' : 'skipped'} (${agenciesLinked} inserted, ${agenciesAlreadyLinked} already linked)`,
+        data: { modelsProcessed: modelRows.length, modelsInserted: insertedTotal, mediaInserted, agenciesLinked, agenciesPlanned, agenciesAlreadyLinked, agencyJoinTableUsed: 'models_agencies', agencyIdReceived: agencyIdStr },
       })
     }
 
