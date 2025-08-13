@@ -3,6 +3,16 @@ import { createClient } from '@supabase/supabase-js'
 import { MappingSchema, parseCsvAll, applyMappingToRow, MODELS_FIELDS } from '../shared'
 import { inferGenderFromFilename, inferModelBoardFromFilename } from '../shared'
 
+function isLikelyValidMediaLink(link: string): boolean {
+  try {
+    const u = new URL(link)
+    // Heuristic: require at least 4 consecutive digits somewhere in the path or query
+    return /\d{4,}/.test(u.pathname + u.search)
+  } catch {
+    return false
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData()
@@ -83,6 +93,7 @@ export async function POST(req: NextRequest) {
       for (const media of links) {
         const link = (media as any).link || (media as any).url
         if (!link) continue
+        if (!isLikelyValidMediaLink(link)) continue
         mediaRows.push({ model_id: id, link })
       }
     }
