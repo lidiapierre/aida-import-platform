@@ -11,8 +11,6 @@ interface UploadResponse {
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null)
-  const [gender, setGender] = useState('')
-  const [modelBoard, setModelBoard] = useState('')
   const [isUploading, setIsUploading] = useState(false)
   const [uploadResult, setUploadResult] = useState<UploadResponse | null>(null)
   const [isDragOver, setIsDragOver] = useState(false)
@@ -62,10 +60,10 @@ export default function Home() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     
-    if (!file || !gender) {
+    if (!file) {
       setUploadResult({
         success: false,
-        message: 'Please select a CSV file and choose a gender'
+        message: 'Please select a CSV file'
       })
       return
     }
@@ -76,10 +74,6 @@ export default function Home() {
     try {
       const formData = new FormData()
       formData.append('file', file)
-      formData.append('gender', gender)
-      if (modelBoard) {
-        formData.append('model_board', modelBoard)
-      }
 
       // Step 1: ask server to parse a sample and get agent-proposed mapping preview
       const previewResp = await fetch('/api/ingest/preview', {
@@ -111,16 +105,12 @@ export default function Home() {
   }
 
   const handleConfirm = async () => {
-    if (!file || !gender || !preview) return
+    if (!file || !preview) return
     setIsConfirming(true)
 
     try {
       const formData = new FormData()
       formData.append('file', file)
-      formData.append('gender', gender)
-      if (modelBoard) {
-        formData.append('model_board', modelBoard)
-      }
       formData.append('mapping', JSON.stringify(preview.mapping))
 
       const resp = await fetch('/api/ingest/upsert', {
@@ -209,69 +199,10 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Gender Selection */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Gender
-              </label>
-              <select
-                value={gender}
-                onChange={(e) => setGender(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                required
-              >
-                <option value="">Select gender</option>
-                <option value="male">Male</option>
-                <option value="female">Female</option>
-                <option value="transgender">Transgender</option>
-                <option value="non-binary">Non-binary</option>
-                <option value="transman">Transman</option>
-                <option value="transwoman">Transwoman</option>
-              </select>
-            </div>
-
-            {/* Model Board Selection */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Model Board
-              </label>
-              <select
-                value={modelBoard}
-                onChange={(e) => setModelBoard(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              >
-                <option value="">Select model board (optional)</option>
-                <option value="image">Image</option>
-                <option value="mainboard">Mainboard</option>
-                <option value="a_new_face">A New Face</option>
-                <option value="development">Development</option>
-                <option value="non_binary_aka_x_division">Non Binary AKA X Division</option>
-                <option value="direct">Direct</option>
-                <option value="youth">Youth</option>
-                <option value="classic">Classic</option>
-                <option value="timeless">Timeless</option>
-                <option value="curve">Curve</option>
-                <option value="teen">Teen</option>
-                <option value="commercial">Commercial</option>
-                <option value="preview">Preview</option>
-                <option value="verve">Verve</option>
-                <option value="big_and_tall">Big and Tall</option>
-                <option value="a_family">A Family</option>
-                <option value="couples">Couples</option>
-                <option value="petite">Petite</option>
-                <option value="lifestyle">Lifestyle</option>
-                <option value="fit">Fit</option>
-                <option value="runway">Runway</option>
-                <option value="streetcast">Streetcast</option>
-                <option value="elite">Elite</option>
-                <option value="premier">Premier</option>
-              </select>
-            </div>
-
             {/* Submit Button */}
             <button
               type="submit"
-              disabled={isUploading || !file || !gender}
+              disabled={isUploading || !file}
               className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isUploading ? (
@@ -298,6 +229,12 @@ export default function Home() {
                 </p>
               </div>
               <div className="mt-3 text-xs text-blue-900">
+                {preview.inferred && (
+                  <div className="mb-2">
+                    <div>Inferred gender: <span className="font-semibold">{preview.inferred.gender}</span></div>
+                    <div>Inferred model board: <span className="font-semibold">{preview.inferred.model_board_category || 'none'}</span></div>
+                  </div>
+                )}
                 <pre className="whitespace-pre-wrap">
                   {JSON.stringify(preview.samplePreview, null, 2)}
                 </pre>

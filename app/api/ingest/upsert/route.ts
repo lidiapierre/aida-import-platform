@@ -1,17 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { MappingSchema, parseCsvAll, applyMappingToRow } from '../shared'
+import { inferGenderFromFilename, inferModelBoardFromFilename } from '../shared'
 
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData()
     const file = formData.get('file') as unknown as File
-    const gender = String(formData.get('gender') || '')
-    const modelBoard = String(formData.get('model_board') || '')
     const mappingStr = String(formData.get('mapping') || '')
 
-    if (!file || !gender || !mappingStr) {
-      return NextResponse.json({ success: false, message: 'Missing file, gender, or mapping' }, { status: 400 })
+    if (!file || !mappingStr) {
+      return NextResponse.json({ success: false, message: 'Missing file or mapping' }, { status: 400 })
     }
 
     const mapping = MappingSchema.parse(JSON.parse(mappingStr))
@@ -19,8 +18,13 @@ export async function POST(req: NextRequest) {
     const { rows } = await parseCsvAll(file)
 
     const dataSource = (file as any).name || 'upload.csv'
+    const inferredGender = inferGenderFromFilename(dataSource)
+    if (!inferredGender) {
+      return NextResponse.json({ success: false, message: 'Could not infer gender from filename. Include a clear indicator such as girls, boys, men, women, female, male, transgender, non-binary, transman, or transwoman.' }, { status: 400 })
+    }
+    const inferredModelBoard = inferModelBoardFromFilename(dataSource)
 
-    const transformed = rows.map((row) => applyMappingToRow(row, mapping, { gender, modelBoard: modelBoard || null, dataSource }))
+    const transformed = rows.map((row) => applyMappingToRow(row, mapping, { gender: inferredGender, modelBoard: inferredModelBoard || null, dataSource }))
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL as string
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY as string

@@ -249,6 +249,88 @@ export async function parseCsvAll(file: File): Promise<{ headers: string[]; rows
   })
 }
 
+// Infer gender and model board values from the CSV filename
+function normalizeFilenameForSearch(name: string): { underscored: string; tokens: Set<string> } {
+  const lower = String(name || '').toLowerCase()
+  const underscored = lower.replace(/[^a-z0-9]+/g, '_').replace(/_+/g, '_')
+  const tokens = new Set(underscored.split('_').filter(Boolean))
+  return { underscored, tokens }
+}
+
+export function inferGenderFromFilename(fileName: string): string | null {
+  const { underscored, tokens } = normalizeFilenameForSearch(fileName)
+
+  const hasToken = (t: string) => tokens.has(t)
+  const hasBounded = (t: string) => new RegExp(`(^|_)${t}(_|$)`).test(underscored)
+
+  // Most specific first
+  if (hasToken('transman') || hasBounded('trans_man')) return 'transman'
+  if (hasToken('transwoman') || hasBounded('trans_woman')) return 'transwoman'
+  if (hasToken('transgender') || hasBounded('trans')) return 'transgender'
+  if (hasToken('nonbinary') || hasBounded('non_binary') || hasToken('nb') || hasBounded('x_division') || hasToken('enby')) return 'non-binary'
+
+  const femaleHints = [
+    'female', 'females',
+    'women', 'womens', 'woman', 'womxn',
+    'girls', 'girl',
+    'ladies', 'lady'
+  ]
+  for (const h of femaleHints) {
+    if (hasToken(h) || hasBounded(h)) return 'female'
+  }
+
+  const maleHints = [
+    'male', 'males',
+    'men', 'mens', 'man',
+    'boys', 'boy',
+    'guys', 'gentlemen', 'gentleman', 'gents'
+  ]
+  for (const h of maleHints) {
+    if (hasToken(h) || hasBounded(h)) return 'male'
+  }
+
+  return null
+}
+
+export function inferModelBoardFromFilename(fileName: string): string | null {
+  const { underscored } = normalizeFilenameForSearch(fileName)
+  const bounded = (t: string) => new RegExp(`(^|_)${t}(_|$)`).test(underscored)
+
+  const candidates: Array<{ value: string; tokens: string[] }> = [
+    { value: 'image', tokens: ['image'] },
+    { value: 'mainboard', tokens: ['mainboard'] },
+    { value: 'a_new_face', tokens: ['a_new_face', 'new_face', 'newface'] },
+    { value: 'development', tokens: ['development'] },
+    { value: 'non_binary_aka_x_division', tokens: ['non_binary_aka_x_division', 'x_division', 'x-division', 'non_binary', 'non-binary', 'nonbinary', 'nb'] },
+    { value: 'direct', tokens: ['direct'] },
+    { value: 'youth', tokens: ['youth'] },
+    { value: 'classic', tokens: ['classic'] },
+    { value: 'timeless', tokens: ['timeless'] },
+    { value: 'curve', tokens: ['curve'] },
+    { value: 'teen', tokens: ['teen'] },
+    { value: 'commercial', tokens: ['commercial'] },
+    { value: 'preview', tokens: ['preview'] },
+    { value: 'verve', tokens: ['verve'] },
+    { value: 'big_and_tall', tokens: ['big_and_tall', 'bigandtall', 'big_tall', 'big-tall'] },
+    { value: 'a_family', tokens: ['a_family', 'family'] },
+    { value: 'couples', tokens: ['couples'] },
+    { value: 'petite', tokens: ['petite'] },
+    { value: 'lifestyle', tokens: ['lifestyle'] },
+    { value: 'fit', tokens: ['fit'] },
+    { value: 'runway', tokens: ['runway'] },
+    { value: 'streetcast', tokens: ['streetcast'] },
+    { value: 'elite', tokens: ['elite'] },
+    { value: 'premier', tokens: ['premier'] },
+  ]
+
+  for (const c of candidates) {
+    for (const t of c.tokens) {
+      if (bounded(t)) return c.value
+    }
+  }
+  return null
+}
+
 export function applyMappingToRow(
   row: Record<string, any>,
   mapping: Mapping,

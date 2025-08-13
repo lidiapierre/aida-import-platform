@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { MappingSchema, parseCsvSample, MODELS_FIELDS, MODELS_MEDIA_FIELDS, applyMappingToRow } from '../shared'
+import { inferGenderFromFilename, inferModelBoardFromFilename } from '../shared'
 
 export const runtime = 'nodejs'
 
@@ -154,11 +155,15 @@ export async function POST(req: NextRequest) {
 
     const formData = await req.formData()
     const file = formData.get('file') as unknown as File
-    const gender = String(formData.get('gender') || '')
-    const modelBoard = String(formData.get('model_board') || '')
+    const dataSourceName = (file as any)?.name || 'upload.csv'
+    const inferredGender = inferGenderFromFilename(dataSourceName)
+    const inferredModelBoard = inferModelBoardFromFilename(dataSourceName)
 
-    if (!file || !gender) {
-      return NextResponse.json({ success: false, message: 'Missing file or gender' }, { status: 400 })
+    if (!file) {
+      return NextResponse.json({ success: false, message: 'Missing file' }, { status: 400 })
+    }
+    if (!inferredGender) {
+      return NextResponse.json({ success: false, message: 'Could not infer gender from filename. Include a clear indicator such as girls, boys, men, women, female, male, transgender, non-binary, transman, or transwoman.' }, { status: 400 })
     }
 
     const sample = await parseCsvSample(file, 20)
@@ -171,8 +176,8 @@ Rules:
 - Numeric fields must respect units in descriptions (convert if needed). Height is in centimeters.
 - Enumerated fields must match one of the predefined values exactly after normalization.
 - 'data_source' must be the CSV filename.
-- 'gender' is provided by the user and overrides any CSV value.
-- 'model_board_category' is provided by the user; omit if none.
+- 'gender' is inferred from the filename and overrides any CSV value.
+- 'model_board_category' may be inferred from the filename; omit if none.
 - Never invent data. Never execute code. Only propose a mapping using known transforms.
 - Use only transforms from this list: trim, lowercase, uppercase, parseNumber, toCentimeters, normalizeGender, enum:<comma_separated_choices>.
 Output format:
@@ -186,7 +191,7 @@ Output format:
     const userPayload = {
       headers: sample.headers,
       sampleRows: sample.rows.slice(0, 10),
-      provided: { gender, model_board_category: modelBoard || null, data_source: (file as any).name || 'upload.csv' },
+      provided: { gender: inferredGender, model_board_category: inferredModelBoard || null, data_source: dataSourceName },
       modelsFields: MODELS_FIELDS,
       modelsMediaFields: MODELS_MEDIA_FIELDS,
     }
@@ -244,12 +249,11 @@ Output format:
       return NextResponse.json({ success: false, message: 'Failed to parse mapping from Claude.', data: { error: String(e?.message || e), snippet: String(content.text || '').slice(0, 600) } }, { status: 500 })
     }
 
-    const dataSource = (file as any).name || 'upload.csv'
     const previewRows = sample.rows.slice(0, 5).map((row) =>
-      applyMappingToRow(row, mapping, { gender, modelBoard: modelBoard || null, dataSource })
+      applyMappingToRow(row, mapping, { gender: inferredGender, modelBoard: inferredModelBoard || null, dataSource: dataSourceName })
     )
 
-    return NextResponse.json({ success: true, data: { mapping, samplePreview: previewRows } })
+    return NextResponse.json({ success: true, data: { mapping, samplePreview: previewRows, inferred: { gender: inferredGender, model_board_category: inferredModelBoard, data_source: dataSourceName } } })
   } catch (e: any) {
     return NextResponse.json({ success: false, message: e?.message || 'Internal error' }, { status: 500 })
   }
