@@ -8,6 +8,7 @@ export async function POST(req: NextRequest) {
     const formData = await req.formData()
     const file = formData.get('file') as unknown as File
     const mappingStr = String(formData.get('mapping') || '')
+    const agencyIdStr = formData.get('agency_id') as string | null
 
     if (!file || !mappingStr) {
       return NextResponse.json({ success: false, message: 'Missing file or mapping' }, { status: 400 })
@@ -52,18 +53,19 @@ export async function POST(req: NextRequest) {
       insertedTotal += data?.length || 0
     }
 
-    // Fetch ids for all models of this data_source to link media
+    // Fetch ids for all models of this data_source to link media and agencies
     const { data: modelsForSource, error: fetchErr } = await supabase
       .from('models')
       .select('id,model_name,data_source')
       .eq('data_source', dataSource)
     if (fetchErr) {
-      return NextResponse.json({ success: false, message: `Failed to fetch models for media linking: ${fetchErr.message}` }, { status: 500 })
+      return NextResponse.json({ success: false, message: `Failed to fetch models for linking: ${fetchErr.message}` }, { status: 500 })
     }
     const keyToId = new Map<string, number>(
       (modelsForSource || []).map((m: any) => [`${m.model_name}||${m.data_source}`, m.id])
     )
 
+    // Prepare media rows
     const mediaRows: { model_id: number; link: string }[] = []
     for (const t of transformed) {
       const links = t.models_media || []
@@ -78,6 +80,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Insert media rows
     let mediaInserted = 0
     for (let i = 0; i < mediaRows.length; i += BATCH_SIZE) {
       const batch = mediaRows.slice(i, i + BATCH_SIZE)
@@ -88,10 +91,34 @@ export async function POST(req: NextRequest) {
       mediaInserted += data?.length || 0
     }
 
+    // Optionally insert model-agency relationships
+    let agenciesLinked = 0
+    const agencyId = agencyIdStr ? Number(agencyIdStr) : null
+    if (agencyId && Number.isFinite(agencyId)) {
+      const relRows: { model_id: number; agency_id: number }[] = []
+      for (const t of transformed) {
+        const key = `${t.models.model_name}||${t.models.data_source}`
+        const id = keyToId.get(key)
+        if (!id) continue
+        relRows.push({ model_id: id, agency_id: agencyId })
+      }
+      for (let i = 0; i < relRows.length; i += BATCH_SIZE) {
+        const batch = relRows.slice(i, i + BATCH_SIZE)
+        const { data, error } = await supabase
+          .from('model_agencies')
+          .insert(batch)
+          .select('model_id,agency_id')
+        if (error) {
+          return NextResponse.json({ success: false, message: `Model-agency insert failed: ${error.message}` }, { status: 500 })
+        }
+        agenciesLinked += data?.length || 0
+      }
+    }
+
     return NextResponse.json({
       success: true,
       message: 'Upsert complete',
-      data: { modelsProcessed: modelRows.length, modelsInserted: insertedTotal, mediaInserted },
+      data: { modelsProcessed: modelRows.length, modelsInserted: insertedTotal, mediaInserted, agenciesLinked },
     })
   } catch (e: any) {
     return NextResponse.json({ success: false, message: e?.message || 'Internal error' }, { status: 500 })

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback } from 'react'
-import { Upload, FileText, CheckCircle, AlertCircle, Loader2 } from 'lucide-react'
+import { Upload, FileText, CheckCircle, AlertCircle, Loader2, Plus, Globe } from 'lucide-react'
 
 interface UploadResponse {
   success: boolean
@@ -17,11 +17,23 @@ export default function Home() {
   const [preview, setPreview] = useState<any | null>(null)
   const [isConfirming, setIsConfirming] = useState(false)
 
+  const [agencySuggestions, setAgencySuggestions] = useState<any[] | null>(null)
+  const [proposedAgency, setProposedAgency] = useState<any | null>(null)
+  const [selectedAgencyId, setSelectedAgencyId] = useState<number | null>(null)
+  const [isSuggestingAgency, setIsSuggestingAgency] = useState(false)
+  const [creatingAgency, setCreatingAgency] = useState<boolean>(false)
+  const [createAgencyError, setCreateAgencyError] = useState<string | null>(null)
+  const [showAgencyCreateForm, setShowAgencyCreateForm] = useState<boolean>(false)
+
   const handleFileSelect = useCallback((selectedFile: File) => {
     if (selectedFile.type === 'text/csv' || selectedFile.name.endsWith('.csv')) {
       setFile(selectedFile)
       setUploadResult(null)
       setPreview(null)
+      setSelectedAgencyId(null)
+      setAgencySuggestions(null)
+      setProposedAgency(null)
+      setShowAgencyCreateForm(false)
     } else {
       setUploadResult({
         success: false,
@@ -43,7 +55,6 @@ export default function Home() {
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
     setIsDragOver(false)
-    
     const droppedFile = e.dataTransfer.files[0]
     if (droppedFile) {
       handleFileSelect(droppedFile)
@@ -57,14 +68,77 @@ export default function Home() {
     }
   }, [handleFileSelect])
 
+  const fetchAgencySuggestions = useCallback(async (csv: File) => {
+    setIsSuggestingAgency(true)
+    setCreateAgencyError(null)
+    try {
+      const formData = new FormData()
+      formData.append('file', csv)
+      const resp = await fetch('/api/agencies/suggest', { method: 'POST', body: formData })
+      const json = await resp.json()
+      if (!resp.ok || !json?.success) {
+        setAgencySuggestions([])
+        setProposedAgency(null)
+        return
+      }
+      setAgencySuggestions(json.data?.suggestions || [])
+      setProposedAgency(json.data?.proposedAgency || null)
+    } catch (e) {
+      setAgencySuggestions([])
+      setProposedAgency(null)
+    } finally {
+      setIsSuggestingAgency(false)
+    }
+  }, [])
+
+  const handleSuggestAgencies = async () => {
+    if (!file) return
+    await fetchAgencySuggestions(file)
+  }
+
+  const handleCreateAgency = async () => {
+    setCreatingAgency(true)
+    setCreateAgencyError(null)
+    try {
+      const body = {
+        name: proposedAgency?.name || '',
+        country: proposedAgency?.country || null,
+        city: proposedAgency?.city || null,
+        continent: proposedAgency?.continent || null,
+        website: proposedAgency?.website || null,
+      }
+      const resp = await fetch('/api/agencies/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const json = await resp.json()
+      if (!resp.ok || !json?.success) {
+        setCreateAgencyError(json?.message || 'Failed to create agency')
+        return
+      }
+      setSelectedAgencyId(json.data?.id || null)
+      setShowAgencyCreateForm(false)
+    } catch (e) {
+      setCreateAgencyError('Network error while creating agency')
+    } finally {
+      setCreatingAgency(false)
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    
+
     if (!file) {
       setUploadResult({
         success: false,
         message: 'Please select a CSV file'
       })
+      return
+    }
+
+    if (selectedAgencyId == null) {
+      setUploadResult({ success: false, message: 'Please select or create an agency before continuing.' })
       return
     }
 
@@ -112,6 +186,7 @@ export default function Home() {
       const formData = new FormData()
       formData.append('file', file)
       formData.append('mapping', JSON.stringify(preview.mapping))
+      if (selectedAgencyId != null) formData.append('agency_id', String(selectedAgencyId))
 
       const resp = await fetch('/api/ingest/upsert', {
         method: 'POST',
@@ -199,6 +274,134 @@ export default function Home() {
               </div>
             </div>
 
+            {/* Agency selection step */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-medium text-gray-700">Select Agency</label>
+                <button
+                  type="button"
+                  onClick={handleSuggestAgencies}
+                  disabled={!file || isSuggestingAgency}
+                  className="text-xs text-blue-600 hover:text-blue-800 disabled:opacity-50"
+                >
+                  {isSuggestingAgency ? 'Finding suggestions…' : 'Suggest from CSV'}
+                </button>
+              </div>
+
+              {agencySuggestions && (
+                <div className="space-y-2">
+                  {agencySuggestions.length === 0 && (
+                    <div className="text-xs text-gray-500">No close matches found.</div>
+                  )}
+                  {agencySuggestions.map((a) => (
+                    <label key={a.id} className="flex items-start space-x-3 p-3 border rounded-md hover:bg-gray-50">
+                      <input
+                        type="radio"
+                        name="agency"
+                        value={a.id}
+                        checked={selectedAgencyId === a.id}
+                        onChange={() => setSelectedAgencyId(a.id)}
+                      />
+                      <div className="text-sm">
+                        <div className="font-medium text-gray-900">{a.name}</div>
+                        <div className="text-gray-600 text-xs">
+                          {[a.city, a.country, a.continent].filter(Boolean).join(' • ')}
+                        </div>
+                        {a.website && (
+                          <div className="text-xs text-blue-600 flex items-center space-x-1">
+                            <Globe className="w-3 h-3" />
+                            <span>{a.website}</span>
+                          </div>
+                        )}
+                        <div className="text-[10px] text-gray-500">match score {(a.score ?? 0).toFixed(2)}</div>
+                      </div>
+                    </label>
+                  ))}
+                  <div className="pt-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!proposedAgency) setProposedAgency({ name: '', country: '', city: '', continent: '', website: '' })
+                        setShowAgencyCreateForm(true)
+                      }}
+                      className="inline-flex items-center text-xs text-green-700 hover:text-green-900"
+                    >
+                      <Plus className="w-4 h-4 mr-1" /> Create New Agency
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Proposed new agency (hidden until explicitly requested) */}
+              {showAgencyCreateForm && proposedAgency && (
+                <div className="mt-2 p-3 border rounded-md">
+                  <div className="text-xs text-gray-500 mb-1">Proposed from CSV</div>
+                  <div className="grid grid-cols-1 gap-2 text-sm">
+                    <div>
+                      <div className="text-gray-700">Name</div>
+                      <input
+                        className="mt-1 w-full border rounded px-2 py-1 text-sm"
+                        value={proposedAgency.name || ''}
+                        onChange={(e) => setProposedAgency({ ...proposedAgency, name: e.target.value })}
+                        placeholder="Agency name"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <div className="text-gray-700">Country</div>
+                        <input
+                          className="mt-1 w-full border rounded px-2 py-1 text-sm"
+                          value={proposedAgency.country || ''}
+                          onChange={(e) => setProposedAgency({ ...proposedAgency, country: e.target.value })}
+                          placeholder="Country"
+                        />
+                      </div>
+                      <div>
+                        <div className="text-gray-700">City</div>
+                        <input
+                          className="mt-1 w-full border rounded px-2 py-1 text-sm"
+                          value={proposedAgency.city || ''}
+                          onChange={(e) => setProposedAgency({ ...proposedAgency, city: e.target.value })}
+                          placeholder="City"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-gray-700">Continent</div>
+                      <input
+                        className="mt-1 w-full border rounded px-2 py-1 text-sm"
+                        value={proposedAgency.continent || ''}
+                        onChange={(e) => setProposedAgency({ ...proposedAgency, continent: e.target.value })}
+                        placeholder="Continent"
+                      />
+                    </div>
+                    <div>
+                      <div className="text-gray-700">Website</div>
+                      <input
+                        className="mt-1 w-full border rounded px-2 py-1 text-sm"
+                        value={proposedAgency.website || ''}
+                        onChange={(e) => setProposedAgency({ ...proposedAgency, website: e.target.value })}
+                        placeholder="https://example.com"
+                      />
+                    </div>
+                  </div>
+                  <div className="mt-3 flex items-center justify-between">
+                    <button
+                      type="button"
+                      onClick={handleCreateAgency}
+                      disabled={creatingAgency || !proposedAgency.name}
+                      className="inline-flex items-center text-xs text-green-700 hover:text-green-900"
+                    >
+                      <Plus className="w-4 h-4 mr-1" /> Create & Select Agency
+                    </button>
+                    {createAgencyError && (
+                      <div className="text-xs text-red-600">{createAgencyError}</div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* Submit Button */}
             <button
               type="submit"
@@ -241,7 +444,7 @@ export default function Home() {
               </div>
               <button
                 onClick={handleConfirm}
-                disabled={isConfirming}
+                disabled={isConfirming || selectedAgencyId == null}
                 className="mt-4 w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 disabled:opacity-50"
               >
                 {isConfirming ? 'Upserting...' : 'Confirm and Upsert'}
