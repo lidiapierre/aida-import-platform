@@ -32,21 +32,18 @@ export async function POST(req: NextRequest) {
 
     const modelRows = transformed.map((t) => t.models)
 
-    // Basic safety: ensure model_name exists for keying; otherwise we still insert but cannot relate media
-    const upsertable = modelRows
-
-    // Assumption: unique key is (model_name, data_source)
     const BATCH_SIZE = 500
     let insertedTotal = 0
 
-    for (let i = 0; i < upsertable.length; i += BATCH_SIZE) {
-      const batch = upsertable.slice(i, i + BATCH_SIZE)
+    // Simply insert all model rows; no conflict handling
+    for (let i = 0; i < modelRows.length; i += BATCH_SIZE) {
+      const batch = modelRows.slice(i, i + BATCH_SIZE)
       const { data, error } = await supabase
         .from('models')
-        .upsert(batch, { onConflict: 'model_name,data_source' })
+        .insert(batch)
         .select('id,model_name,data_source')
       if (error) {
-        return NextResponse.json({ success: false, message: `Models upsert failed: ${error.message}` }, { status: 500 })
+        return NextResponse.json({ success: false, message: `Models insert failed: ${error.message}` }, { status: 500 })
       }
       insertedTotal += data?.length || 0
     }
@@ -65,13 +62,16 @@ export async function POST(req: NextRequest) {
 
     const mediaRows: { model_id: number; link: string }[] = []
     for (const t of transformed) {
-      if (!t.models_media) continue
-      const link = (t.models_media as any).link || (t.models_media as any).url
-      if (!link) continue
+      const links = t.models_media || []
+      if (!links.length) continue
       const key = `${t.models.model_name}||${t.models.data_source}`
       const id = keyToId.get(key)
       if (!id) continue
-      mediaRows.push({ model_id: id, link })
+      for (const media of links) {
+        const link = (media as any).link || (media as any).url
+        if (!link) continue
+        mediaRows.push({ model_id: id, link })
+      }
     }
 
     let mediaInserted = 0
@@ -87,7 +87,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       message: 'Upsert complete',
-      data: { modelsProcessed: modelRows.length, modelsUpserted: insertedTotal, mediaInserted },
+      data: { modelsProcessed: modelRows.length, modelsInserted: insertedTotal, mediaInserted },
     })
   } catch (e: any) {
     return NextResponse.json({ success: false, message: e?.message || 'Internal error' }, { status: 500 })

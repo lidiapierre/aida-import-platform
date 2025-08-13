@@ -194,6 +194,26 @@ const CM_COLUMNS = new Set<string>([
   'min_hips', 'max_hips',
 ])
 
+function extractUrls(input: any): string[] {
+  if (input == null) return []
+  const text = String(input)
+  // Split on common delimiters and whitespace/newlines
+  const parts = text
+    .split(/[\s,;\n\r\t]+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+
+  const urls: string[] = []
+  for (const p of parts) {
+    // Basic URL heuristic
+    if (/^https?:\/\//i.test(p)) {
+      urls.push(p)
+    }
+  }
+  // Deduplicate
+  return Array.from(new Set(urls))
+}
+
 export async function parseCsvSample(file: File, sampleSize: number): Promise<{ headers: string[]; rows: any[] }> {
   const text = await file.text()
   return new Promise((resolve, reject) => {
@@ -233,9 +253,9 @@ export function applyMappingToRow(
   row: Record<string, any>,
   mapping: Mapping,
   opts: { gender: string; modelBoard?: string | null; dataSource: string }
-): { models: Record<string, any>; models_media: Record<string, any> | null } {
+): { models: Record<string, any>; models_media: Array<Record<string, any>> } {
   const models: Record<string, any> = {}
-  const media: Record<string, any> = {}
+  const mediaRows: Array<Record<string, any>> = []
 
   for (const [target, spec] of Object.entries(mapping.fieldMappings || {} as Mapping['fieldMappings'])) {
     const [table, column] = target.split('.')
@@ -256,24 +276,31 @@ export function applyMappingToRow(
     if (table === 'models') models[column] = finalVal
     if (table === 'models_media') {
       if (column === 'id' || column === 'model_id') continue
-      media[column] = finalVal
+      // For models_media at fieldMappings scope, ignore except link which is handled below via mediaMappings
+      // Kept for future extensibility
     }
   }
 
-  // Apply explicit mediaMappings if provided
+  // Build media rows from mediaMappings (supports multiple links per row)
   if (mapping.mediaMappings) {
-    for (const [target, spec] of Object.entries(mapping.mediaMappings as Record<string, any>)) {
-      const [table, column] = target.split('.')
-      if (table !== 'models_media') continue
-      if (column === 'data_source' || column === 'id' || column === 'model_id') continue
-
-      const fromSpec = (spec as any).from as string | string[] | undefined
-      let sourceVal: any = getSourceValue(row, fromSpec)
-      const transformRequested = (spec as any).transform as string | undefined
-      const transformToApply = CM_COLUMNS.has(column) ? 'toCentimeters' : transformRequested
-      const transformed = applyTransform(sourceVal, transformToApply)
-      const finalVal = transformed ?? (spec as any).default ?? null
-      media[column] = finalVal
+    const linkSpec = (mapping.mediaMappings as Record<string, any>)['models_media.link']
+    if (linkSpec) {
+      const fromSpec = (linkSpec as any).from as string | string[] | undefined
+      const candidates = Array.isArray(fromSpec) ? fromSpec : fromSpec ? [fromSpec] : []
+      const foundLinks: string[] = []
+      for (const cand of candidates) {
+        const val = getSourceValue(row, cand)
+        foundLinks.push(...extractUrls(val))
+      }
+      // If no candidates specified but a single from exists, also consider it
+      if (candidates.length === 0) {
+        const val = (linkSpec as any).from
+        foundLinks.push(...extractUrls(val))
+      }
+      const uniqueLinks = Array.from(new Set(foundLinks)).filter(Boolean)
+      for (const link of uniqueLinks) {
+        mediaRows.push({ link })
+      }
     }
   }
 
@@ -282,5 +309,5 @@ export function applyMappingToRow(
   if (opts.modelBoard) models.model_board_category = opts.modelBoard
   models.data_source = opts.dataSource
 
-  return { models, models_media: Object.keys(media).length ? media : null }
+  return { models, models_media: mediaRows }
 } 

@@ -45,6 +45,84 @@ function extractJsonObject(text: string): any {
   throw new Error('No valid JSON object found in text')
 }
 
+function coerceMappingRecord(record: any, allowedTable?: 'models' | 'models_media') {
+  if (!record || typeof record !== 'object') return {}
+  const out: Record<string, any> = {}
+  for (const [key, value] of Object.entries(record)) {
+    // Optionally filter keys by table prefix
+    if (allowedTable) {
+      const [table] = key.split('.')
+      if (table !== allowedTable) continue
+    }
+    if (value == null) {
+      out[key] = {}
+    } else if (typeof value === 'string' || Array.isArray(value)) {
+      out[key] = { from: value }
+    } else if (typeof value === 'object') {
+      out[key] = value
+    }
+  }
+  return out
+}
+
+function normalizeFromSpec(from: any): string | string[] | undefined {
+  if (from == null) return undefined
+  const collect: string[] = []
+  const pushIfString = (v: any) => {
+    if (typeof v === 'string') {
+      const s = v.trim()
+      if (s) collect.push(s)
+    }
+  }
+  const extractFromObj = (o: any) => {
+    if (!o || typeof o !== 'object') return
+    // Common keys Claude might use
+    pushIfString(o.from)
+    pushIfString(o.name)
+    pushIfString(o.column)
+    pushIfString(o.header)
+  }
+  if (typeof from === 'string') pushIfString(from)
+  else if (Array.isArray(from)) {
+    for (const item of from) {
+      if (typeof item === 'string') pushIfString(item)
+      else if (typeof item === 'object') extractFromObj(item)
+    }
+  } else if (typeof from === 'object') {
+    extractFromObj(from)
+  }
+  if (collect.length === 0) return undefined
+  return collect.length === 1 ? collect[0] : Array.from(new Set(collect))
+}
+
+function normalizeMappingShape(obj: any) {
+  if (!obj || typeof obj !== 'object') return obj
+  const copy: any = { ...obj }
+  copy.fieldMappings = coerceMappingRecord(copy.fieldMappings)
+  // Only allow models_media.link in mediaMappings
+  const coercedMedia = coerceMappingRecord(copy.mediaMappings, 'models_media')
+  const filteredMedia: Record<string, any> = {}
+  for (const [k, v] of Object.entries(coercedMedia)) {
+    if (k === 'models_media.link') filteredMedia[k] = v
+  }
+  copy.mediaMappings = Object.keys(filteredMedia).length ? filteredMedia : undefined
+
+  // Normalize any `from` fields to string or string[]
+  const normalizeFromOn = (rec: Record<string, any>) => {
+    for (const spec of Object.values(rec)) {
+      if (spec && typeof spec === 'object') {
+        const normalized = normalizeFromSpec((spec as any).from)
+        if (normalized !== undefined) (spec as any).from = normalized
+        else delete (spec as any).from
+      }
+    }
+  }
+  if (copy.fieldMappings) normalizeFromOn(copy.fieldMappings)
+  if (copy.mediaMappings) normalizeFromOn(copy.mediaMappings)
+
+  return copy
+}
+
 async function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -160,7 +238,8 @@ Output format:
     try {
       const raw = content.text || ''
       const obj = extractJsonObject(raw)
-      mapping = MappingSchema.parse(obj)
+      const normalized = normalizeMappingShape(obj)
+      mapping = MappingSchema.parse(normalized)
     } catch (e: any) {
       return NextResponse.json({ success: false, message: 'Failed to parse mapping from Claude.', data: { error: String(e?.message || e), snippet: String(content.text || '').slice(0, 600) } }, { status: 500 })
     }
