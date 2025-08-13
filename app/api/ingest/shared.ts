@@ -70,6 +70,110 @@ export const MappingSchema = z.object({
 
 export type Mapping = z.infer<typeof MappingSchema>
 
+function parseUkShoeBounds(input: any): { min: number; max: number } | null {
+  if (input == null) return null
+  const normalizeFractions = (str: string) =>
+    String(str)
+      .replace(/½/g, '.5')
+      .replace(/¼/g, '.25')
+      .replace(/¾/g, '.75')
+  const raw = normalizeFractions(String(input)).toLowerCase().trim()
+  if (!raw) return null
+  const ukIndex = raw.indexOf('uk')
+  if (ukIndex === -1) return null
+  const tail = raw.slice(ukIndex)
+  const matches = tail.match(/(\d+(?:\.[\d]+)?)/g)
+  if (!matches || matches.length === 0) return null
+  const nums = matches
+    .map((m) => Number(m))
+    .filter((n) => Number.isFinite(n))
+  if (!nums.length) return null
+  const min = Math.min(...nums)
+  const max = Math.max(...nums)
+  return { min, max }
+}
+
+function normalizeFractionsGeneric(s: string): string {
+  return s
+    .replace(/½/g, '.5')
+    .replace(/¼/g, '.25')
+    .replace(/¾/g, '.75')
+}
+
+function parseShoeToUkBounds(value: any, gender: string | null | undefined, unitHint?: 'uk' | 'eu' | 'us' | ''): { min: number; max: number } | null {
+  if (value == null) return null
+  const raw = normalizeFractionsGeneric(String(value).toLowerCase().trim())
+  if (!raw) return null
+
+  const push = (arr: number[], n: any) => {
+    const num = Number(n)
+    if (Number.isFinite(num)) arr.push(num)
+  }
+
+  const collectUnitValues = (unitPattern: string) => {
+    const vals: number[] = []
+    const u = unitPattern // e.g., '(?:uk)' or '(?:eu|eur)'
+    // Range: unit first
+    const re1 = new RegExp(`${u}\\s*([0-9]+(?:\\.[0-9]+)?)\\s*[-/–]\\s*([0-9]+(?:\\.[0-9]+)?)`, 'g')
+    // Range: number first then unit
+    const re2 = new RegExp(`([0-9]+(?:\\.[0-9]+)?)\\s*[-/–]\\s*([0-9]+(?:\\.[0-9]+)?)\\s*${u}`, 'g')
+    // Single: unit then number
+    const re3 = new RegExp(`${u}\\s*([0-9]+(?:\\.[0-9]+)?)`, 'g')
+    // Single: number then unit
+    const re4 = new RegExp(`([0-9]+(?:\\.[0-9]+)?)\\s*${u}`, 'g')
+
+    let m: RegExpExecArray | null
+    while ((m = re1.exec(raw))) { push(vals, m[1]); push(vals, m[2]) }
+    while ((m = re2.exec(raw))) { push(vals, m[1]); push(vals, m[2]) }
+    while ((m = re3.exec(raw))) { push(vals, m[1]) }
+    while ((m = re4.exec(raw))) { push(vals, m[1]) }
+    return vals
+  }
+
+  const ukVals = collectUnitValues('(?:uk)')
+  const euVals = collectUnitValues('(?:eu|eur)')
+  const usVals = collectUnitValues('(?:us|usa)')
+
+  const toUk = (n: number, unit: 'uk' | 'eu' | 'us'): number => {
+    const g = (gender || '').toLowerCase()
+    if (unit === 'uk') return n
+    if (unit === 'eu') {
+      // Approximate: women UK = EU - 33; men UK = EU - 34; otherwise average
+      if (g === 'female' || g === 'woman') return n - 33
+      if (g === 'male' || g === 'man') return n - 34
+      return n - 33.5
+    }
+    // unit === 'us'
+    // Approximate: women UK = US - 2; men UK = US - 1; otherwise average
+    if (g === 'female' || g === 'woman') return n - 2
+    if (g === 'male' || g === 'man') return n - 1
+    return n - 1.5
+  }
+
+  const convertedUk: number[] = []
+  if (ukVals.length) {
+    convertedUk.push(...ukVals)
+  } else if (euVals.length) {
+    convertedUk.push(...euVals.map((n) => toUk(n, 'eu')))
+  } else if (usVals.length) {
+    convertedUk.push(...usVals.map((n) => toUk(n, 'us')))
+  } else {
+    // Bare numbers; assume hinted unit, otherwise UK
+    const bare = Array.from(raw.matchAll(/([0-9]+(?:\.[0-9]+)?)/g)).map((m) => Number(m[1])).filter((n) => Number.isFinite(n))
+    if (bare.length) {
+      const unit = (unitHint || '') as 'uk' | 'eu' | 'us' | ''
+      if (unit === 'eu') convertedUk.push(...bare.map((n) => toUk(n, 'eu')))
+      else if (unit === 'us') convertedUk.push(...bare.map((n) => toUk(n, 'us')))
+      else convertedUk.push(...bare)
+    }
+  }
+
+  if (!convertedUk.length) return null
+  const min = Math.min(...convertedUk)
+  const max = Math.max(...convertedUk)
+  return { min, max }
+}
+
 export const SAFE_TRANSFORMS: Record<string, (value: any) => any> = {
   trim: (v) => (typeof v === 'string' ? v.trim() : v),
   lowercase: (v) => (typeof v === 'string' ? v.trim().toLowerCase() : v),
@@ -144,9 +248,61 @@ export const SAFE_TRANSFORMS: Record<string, (value: any) => any> = {
   enumSanitize: (choicesCsv: string) => (v: any) => {
     if (v == null) return null
     const choices = choicesCsv.split(',').map((s) => s.trim())
-    const normalized = String(v).toLowerCase().trim().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '')
-    const found = choices.find((c) => c === normalized)
-    return found || null
+
+    const normalize = (s: string) => s.toLowerCase().trim().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '')
+    const stripUnderscore = (s: string) => s.replace(/_/g, '')
+
+    const normalizedInput = normalize(String(v))
+    const normalizedInputNoUnderscore = stripUnderscore(normalizedInput)
+
+    // Build an index of acceptable variants for each choice
+    const variantToCanonical = new Map<string, string>()
+    for (const choice of choices) {
+      const c = normalize(choice)
+      const cNoUnderscore = stripUnderscore(c)
+
+      // direct forms
+      variantToCanonical.set(c, c)
+      variantToCanonical.set(cNoUnderscore, c)
+
+      // common spelling variants: blonde/blond
+      if (c.includes('blonde')) {
+        const blondVariant = c.replace(/blonde/g, 'blond')
+        variantToCanonical.set(blondVariant, c)
+        variantToCanonical.set(stripUnderscore(blondVariant), c)
+      }
+      if (c.includes('blond')) {
+        const blondeVariant = c.replace(/blond/g, 'blonde')
+        variantToCanonical.set(blondeVariant, c)
+        variantToCanonical.set(stripUnderscore(blondeVariant), c)
+      }
+
+      // common spelling variants: gray/grey
+      if (c.includes('gray')) {
+        const greyVariant = c.replace(/gray/g, 'grey')
+        variantToCanonical.set(greyVariant, c)
+        variantToCanonical.set(stripUnderscore(greyVariant), c)
+      }
+      if (c.includes('grey')) {
+        const grayVariant = c.replace(/grey/g, 'gray')
+        variantToCanonical.set(grayVariant, c)
+        variantToCanonical.set(stripUnderscore(grayVariant), c)
+      }
+    }
+
+    const resolved = variantToCanonical.get(normalizedInput)
+      || variantToCanonical.get(normalizedInputNoUnderscore)
+
+    return resolved || null
+  },
+  // Back-compat transforms that only extract explicit UK values
+  parseUkShoeMin: (v) => {
+    const r = parseUkShoeBounds(v)
+    return r ? r.min : null
+  },
+  parseUkShoeMax: (v) => {
+    const r = parseUkShoeBounds(v)
+    return r ? r.max : null
   },
 }
 
@@ -154,6 +310,20 @@ export function applyTransform(value: any, transform?: string) {
   if (!transform) return value
   if (transform.startsWith('enum:')) {
     return SAFE_TRANSFORMS.enumSanitize(transform.replace('enum:', ''))(value)
+  }
+  if (transform.startsWith('toUkShoeMin')) {
+    const parts = transform.split(':')
+    const gender = parts[1] || ''
+    const hint = (parts[2] || '') as 'uk' | 'eu' | 'us' | ''
+    const r = parseShoeToUkBounds(value, gender, hint)
+    return r ? r.min : null
+  }
+  if (transform.startsWith('toUkShoeMax')) {
+    const parts = transform.split(':')
+    const gender = parts[1] || ''
+    const hint = (parts[2] || '') as 'uk' | 'eu' | 'us' | ''
+    const r = parseShoeToUkBounds(value, gender, hint)
+    return r ? r.max : null
   }
   const fn = SAFE_TRANSFORMS[transform]
   return fn ? fn(value) : value
@@ -187,12 +357,39 @@ function getSourceValue(row: Record<string, any>, fromSpec?: string | string[]):
   return undefined
 }
 
+function getSourceValueWithKey(row: Record<string, any>, fromSpec?: string | string[]): { value: any, keyUsed: string | null } {
+  if (!fromSpec) return { value: undefined, keyUsed: null }
+  const candidates = Array.isArray(fromSpec) ? fromSpec : [fromSpec]
+  const rowKeys = Object.keys(row)
+  const normalizedMap = new Map<string, string>()
+  for (const k of rowKeys) normalizedMap.set(normalizeKey(k), k)
+
+  for (const cand of candidates) {
+    if (cand in row) {
+      const v = row[cand]
+      if (v !== undefined && v !== null && String(v).trim() !== '') return { value: v, keyUsed: cand }
+    }
+    const norm = normalizeKey(cand)
+    const actual = normalizedMap.get(norm)
+    if (actual) {
+      const v = row[actual]
+      if (v !== undefined && v !== null && String(v).trim() !== '') return { value: v, keyUsed: actual }
+    }
+  }
+  return { value: undefined, keyUsed: null }
+}
+
 const CM_COLUMNS = new Set<string>([
   'min_height', 'max_height',
   'min_chest_bust', 'max_chest_bust',
   'min_waist', 'max_waist',
   'min_hips', 'max_hips',
 ])
+
+const SHOE_TRANSFORM_BY_COLUMN: Record<string, string> = {
+  min_shoe_size: 'toUkShoeMin',
+  max_shoe_size: 'toUkShoeMax',
+}
 
 function extractUrls(input: any): string[] {
   if (input == null) return []
@@ -341,6 +538,9 @@ export function inferModelBoardFromFilename(fileName: string): string | null {
   if (hasAll('x', 'division')) return 'non_binary_aka_x_division'
   if (hasAll('non', 'binary')) return 'non_binary_aka_x_division'
 
+  // Single-token hint: treat 'main' as mainboard
+  if (has('main') || bounded('main')) return 'mainboard'
+
   const expandVariants = (t: string): string[] => {
     const variants = new Set<string>()
     const u = t.replace(/-/g, '_')
@@ -404,11 +604,39 @@ export function applyMappingToRow(
     if (column === 'data_source') continue
 
     const fromSpec = (spec as any).from as string | string[] | undefined
-    let sourceVal: any = getSourceValue(row, fromSpec)
+    const { value: sourceVal, keyUsed: sourceKey } = getSourceValueWithKey(row, fromSpec)
 
     // Enforce cm conversion for specific columns
     const transformRequested = (spec as any).transform as string | undefined
-    const transformToApply = CM_COLUMNS.has(column) ? 'toCentimeters' : transformRequested
+    let transformToApply = CM_COLUMNS.has(column) ? 'toCentimeters' : transformRequested
+
+    // Default shoe size parsing for UK sizes (gender-aware) if not explicitly set, or if a generic parseNumber was requested
+    if (table === 'models') {
+      const shoeBase = (SHOE_TRANSFORM_BY_COLUMN as any)[column]
+      if (shoeBase && (!transformRequested || transformRequested === 'parseNumber')) {
+        const genderParam = (opts.gender || '').toLowerCase()
+        // Infer unit hint from source column name if possible
+        let unitHint = ''
+        if (sourceKey) {
+          const k = normalizeKey(sourceKey)
+          if (/\beu\b|\beur\b|european/.test(k)) unitHint = 'eu'
+          else if (/\bus\b|\busa\b|american/.test(k)) unitHint = 'us'
+          else if (/\buk\b|british|\buk_sizes?\b/.test(k)) unitHint = 'uk'
+        }
+        transformToApply = genderParam || unitHint ? `${shoeBase}:${genderParam}:${unitHint}` : shoeBase
+      }
+    }
+
+    // For enum fields on models, default to enum sanitizer if not explicitly set
+    if (!CM_COLUMNS.has(column) && table === 'models') {
+      const fieldMeta: any = (MODELS_FIELDS as any)[column]
+      if (fieldMeta && fieldMeta.type === 'enum') {
+        const enumChoices = Array.isArray(fieldMeta.values) ? fieldMeta.values.join(',') : ''
+        if (!transformRequested || !transformRequested.startsWith('enum:')) {
+          transformToApply = `enum:${enumChoices}`
+        }
+      }
+    }
 
     const transformed = applyTransform(sourceVal, transformToApply)
     const finalVal = transformed ?? (spec as any).default ?? null

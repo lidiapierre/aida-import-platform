@@ -146,15 +146,13 @@ export async function POST(req: NextRequest) {
 
       return NextResponse.json({
         success: true,
-        message: `Upsert complete: models ${insertedTotal}/${modelRows.length}, media ${mediaInserted}, agency linking ${agenciesLinked > 0 ? 'succeeded' : agenciesPlanned > 0 ? 'skipped/duplicate' : 'skipped'} (${agenciesLinked} inserted, ${agenciesAlreadyLinked} already linked)`,
-        data: { modelsProcessed: modelRows.length, modelsInserted: insertedTotal, mediaInserted, agenciesLinked, agenciesPlanned, agenciesAlreadyLinked, agencyJoinTableUsed: 'models_agencies', agencyIdReceived: agencyIdStr },
+        message: `Upsert complete: models ${insertedTotal}/${modelRows.length}, media ${mediaInserted}, agency linking ${agenciesLinked > 0 ? 'succeeded' : agenciesPlanned > 0 ? 'skipped/duplicate' : 'skipped'}`,
       })
     }
 
     return NextResponse.json({
       success: true,
-      message: `Upsert complete: models ${insertedTotal}/${modelRows.length}, media ${mediaInserted}, agency linking skipped (0)`,
-      data: { modelsProcessed: modelRows.length, modelsInserted: insertedTotal, mediaInserted, agenciesLinked },
+      message: `Upsert complete: models ${insertedTotal}/${modelRows.length}, media ${mediaInserted}, agency linking skipped`,
     })
   } catch (e: any) {
     return NextResponse.json({ success: false, message: e?.message || 'Internal error' }, { status: 500 })

@@ -16,7 +16,6 @@ export default function Home() {
   const [isDragOver, setIsDragOver] = useState(false)
   const [preview, setPreview] = useState<any | null>(null)
   const [isConfirming, setIsConfirming] = useState(false)
-
   const [agencySuggestions, setAgencySuggestions] = useState<any[] | null>(null)
   const [proposedAgency, setProposedAgency] = useState<any | null>(null)
   const [selectedAgencyId, setSelectedAgencyId] = useState<number | null>(null)
@@ -26,6 +25,8 @@ export default function Home() {
   const [creatingAgency, setCreatingAgency] = useState<boolean>(false)
   const [createAgencyError, setCreateAgencyError] = useState<string | null>(null)
   const [showAgencyCreateForm, setShowAgencyCreateForm] = useState<boolean>(false)
+  const [feedback, setFeedback] = useState<string>('')
+  const [isRegenerating, setIsRegenerating] = useState<boolean>(false)
 
   const handleFileSelect = useCallback((selectedFile: File) => {
     if (selectedFile.type === 'text/csv' || selectedFile.name.endsWith('.csv')) {
@@ -53,6 +54,7 @@ export default function Home() {
         : null
       setSelectedGender(guess)
       setShowGenderPicker(!guess)
+      setFeedback('')
     } else {
       setUploadResult({
         success: false,
@@ -232,6 +234,31 @@ export default function Home() {
       setUploadResult({ success: false, message: 'Upsert failed due to network or server error.' })
     } finally {
       setIsConfirming(false)
+    }
+  }
+
+  const handleRegenerate = async () => {
+    if (!file) return
+    setIsRegenerating(true)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      if (selectedGender) formData.append('gender', selectedGender)
+      if (feedback) formData.append('feedback', feedback)
+      if (preview?.mapping) formData.append('previous_mapping', JSON.stringify(preview.mapping))
+
+      const resp = await fetch('/api/ingest/preview', { method: 'POST', body: formData })
+      const json = await resp.json()
+      if (!resp.ok || !json?.success) {
+        setUploadResult({ success: false, message: json?.message || 'Failed to regenerate mapping', data: json?.data })
+        return
+      }
+      setPreview(json.data)
+      setUploadResult({ success: true, message: 'Mapping regenerated using your feedback.' })
+    } catch (e) {
+      setUploadResult({ success: false, message: 'Network error during regeneration.' })
+    } finally {
+      setIsRegenerating(false)
     }
   }
 
@@ -508,6 +535,27 @@ export default function Home() {
                   {JSON.stringify(preview.samplePreview, null, 2)}
                 </pre>
               </div>
+
+              {/* Feedback box and regenerate */}
+              <div className="mt-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Feedback to improve the mapping</label>
+                <textarea
+                  className="w-full border rounded px-2 py-2 text-sm"
+                  rows={4}
+                  value={feedback}
+                  onChange={(e) => setFeedback(e.target.value)}
+                  placeholder="Example: Height mapped from 'height' is inches not cm; use toCentimeters. Also map 'instagram' to models_media.link."
+                />
+                <button
+                  type="button"
+                  onClick={handleRegenerate}
+                  disabled={isRegenerating || !file}
+                  className="mt-2 w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  {isRegenerating ? 'Regenerating…' : 'Regenerate mapping'}
+                </button>
+              </div>
+
               <button
                 onClick={handleConfirm}
                 disabled={isConfirming || selectedAgencyId == null}

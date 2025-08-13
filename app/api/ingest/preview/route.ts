@@ -165,6 +165,18 @@ export async function POST(req: NextRequest) {
     const inferredGender = providedGender || inferGenderFromFilename(dataSourceName)
     const inferredModelBoard = inferModelBoardFromFilename(dataSourceName)
 
+    // Optional iterative feedback inputs
+    const reviewFeedback = String(formData.get('feedback') || '').trim()
+    const previousMappingStr = String(formData.get('previous_mapping') || '').trim()
+    let previousMapping: any = null
+    if (previousMappingStr) {
+      try {
+        const obj = JSON.parse(previousMappingStr)
+        const normalizedPrev = normalizeMappingShape(obj)
+        previousMapping = MappingSchema.parse(normalizedPrev)
+      } catch {}
+    }
+
     if (!file) {
       return NextResponse.json({ success: false, message: 'Missing file' }, { status: 400 })
     }
@@ -185,7 +197,8 @@ Rules:
 - 'gender' is inferred from the filename and overrides any CSV value.
 - 'model_board_category' may be inferred from the filename; omit if none.
 - Never invent data. Never execute code. Only propose a mapping using known transforms.
-- Use only transforms from this list: trim, lowercase, uppercase, parseNumber, toCentimeters, normalizeGender, enum:<comma_separated_choices>.
+- Use only transforms from this list: trim, lowercase, uppercase, parseNumber, toCentimeters, normalizeGender, parseUkShoeMin, parseUkShoeMax, toUkShoeMin, toUkShoeMax, enum:<comma_separated_choices>.
+- If user provides a previousMapping and reviewFeedback, revise the mapping accordingly and correct the specific issues noted. Prefer minimally invasive changes that satisfy the feedback while adhering to all rules.
 Output format:
 - Return a single valid JSON object ONLY. No markdown, no code fences, no commentary.
 - Keys: targetTables (array with values from ['models','models_media']), fieldMappings (object), mediaMappings (object, optional), notes (string, optional).
@@ -200,6 +213,8 @@ Output format:
       provided: { gender: inferredGender, model_board_category: inferredModelBoard || null, data_source: dataSourceName },
       modelsFields: MODELS_FIELDS,
       modelsMediaFields: MODELS_MEDIA_FIELDS,
+      previousMapping: previousMapping || null,
+      reviewFeedback: reviewFeedback || null,
     }
 
     let msg
@@ -258,8 +273,10 @@ Output format:
     const previewRows = sample.rows.slice(0, 5).map((row) =>
       applyMappingToRow(row, mapping, { gender: inferredGender, modelBoard: inferredModelBoard || null, dataSource: dataSourceName })
     )
+    // For preview, omit all models_media and only return the models projection
+    const previewModelsOnly = previewRows.map((r) => r.models)
 
-    return NextResponse.json({ success: true, data: { mapping, samplePreview: previewRows, inferred: { gender: inferredGender, model_board_category: inferredModelBoard, data_source: dataSourceName } } })
+    return NextResponse.json({ success: true, data: { mapping, samplePreview: previewModelsOnly, inferred: { gender: inferredGender, model_board_category: inferredModelBoard, data_source: dataSourceName } } })
   } catch (e: any) {
     return NextResponse.json({ success: false, message: e?.message || 'Internal error' }, { status: 500 })
   }
