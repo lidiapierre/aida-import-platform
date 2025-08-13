@@ -214,6 +214,42 @@ function extractUrls(input: any): string[] {
   return Array.from(new Set(urls))
 }
 
+function toTitleCaseName(input: any): string | null {
+  if (input == null) return null
+  const s = String(input).trim()
+  if (!s) return null
+
+  // Lowercase everything first to normalize
+  const lower = s.toLowerCase()
+
+  // Title-case words and preserve common name delimiters (space, hyphen, apostrophes)
+  const delimiters = /([\s\-\'\u2019]+)/
+  const parts = lower.split(delimiters)
+
+  const cap = (word: string) => {
+    if (!word) return word
+    // Handle segments split by apostrophes or hyphens within a token
+    return word
+      .split(/([\-\'\u2019])/)
+      .map((seg) => {
+        if (seg === '-' || seg === "'" || seg === '’') return seg
+        return seg.charAt(0).toUpperCase() + seg.slice(1)
+      })
+      .join('')
+  }
+
+  const titled = parts
+    .map((p, idx) => {
+      // Keep delimiters as-is
+      if (delimiters.test(p)) return p
+      return cap(p)
+    })
+    .join('')
+
+  // Collapse any excessive whitespace to single spaces and trim
+  return titled.replace(/\s+/g, ' ').trim()
+}
+
 export async function parseCsvSample(file: File, sampleSize: number): Promise<{ headers: string[]; rows: any[] }> {
   const text = await file.text()
   return new Promise((resolve, reject) => {
@@ -390,6 +426,11 @@ export function applyMappingToRow(
   models.gender = opts.gender || null
   if (opts.modelBoard) models.model_board_category = opts.modelBoard
   models.data_source = opts.dataSource
+
+  // Post-processing: ensure model_name is title-cased
+  if (models.model_name != null) {
+    models.model_name = toTitleCaseName(models.model_name) as any
+  }
 
   return { models, models_media: mediaRows }
 } 
