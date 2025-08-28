@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ model_id: modelId, claude: false })
+        body: JSON.stringify({ model_id: modelId, claude: true })
       })
       
       if (photosResp.ok) {
