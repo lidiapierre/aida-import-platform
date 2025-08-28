@@ -80,6 +80,10 @@ export async function POST(req: NextRequest) {
     const formData = await req.formData()
     const file = formData.get('file') as unknown as File
     const dataSourceName = (file as any)?.name || 'upload.csv'
+    const originalBaseName = dataSourceName.replace(/\.[a-z0-9]+$/i, '')
+    let sanitizedName = originalBaseName.replace(/aida/gi, '')
+    sanitizedName = sanitizedName.replace(/[_\-\s]+/g, ' ').trim()
+    if (!sanitizedName) sanitizedName = originalBaseName
 
     if (!file) {
       return NextResponse.json({ success: false, message: 'Missing file' }, { status: 400 })
@@ -96,7 +100,7 @@ Output a single JSON object with keys: proposedAgency { name, country, city, con
 If you cannot infer a value, set it to null. Do not invent facts.`
 
     const userPayload = {
-      filename: dataSourceName,
+      filename: sanitizedName,
       headers: sample.headers,
       sampleRows: sample.rows.slice(0, 10),
     }
@@ -113,11 +117,18 @@ If you cannot infer a value, set it to null. Do not invent facts.`
       const content = msg.content?.[0]
       if (!content || content.type !== 'text') throw new Error('Invalid response from Claude')
       const obj = extractJsonObject(content.text || '{}')
-      if (obj && obj.proposedAgency) proposedAgency = obj.proposedAgency
+      if (obj && obj.proposedAgency) {
+        proposedAgency = obj.proposedAgency
+        if (proposedAgency && typeof proposedAgency.name === 'string') {
+          let n = proposedAgency.name.replace(/aida/gi, '')
+          n = n.replace(/[_\-\s]+/g, ' ').trim()
+          proposedAgency.name = n || proposedAgency.name
+        }
+      }
     } catch (e: any) {
-      // Fall back to very naive proposal: try filename segments
-      const base = dataSourceName.replace(/\.[a-z0-9]+$/i, '')
-      proposedAgency.name = base.replace(/[_\-]+/g, ' ').trim() || null
+      // Fall back to very naive proposal: try sanitized filename segments
+      const base = sanitizedName
+      proposedAgency.name = base || null
     }
 
     const supabase = createClient(supabaseUrl, supabaseKey)

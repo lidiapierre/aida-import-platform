@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { ingestConfig } from '../config'
 
 export async function POST(req: NextRequest) {
   try {
@@ -8,8 +9,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, message: 'Missing model_id' }, { status: 400 })
     }
 
-    const baseUrl = 'https://modelrecommendation-d8fdaa3e6179.herokuapp.com'
-    const url = `${baseUrl}/data_ingestion/update_model/${encodeURIComponent(modelId)}`
+    const baseUrl = ingestConfig.baseUrl
+    const params = ingestConfig.updateModelParams
+    const query = new URLSearchParams({
+      use_claude_basic: String(params.use_claude_basic),
+      use_claude_job_types: String(params.use_claude_job_types),
+    })
+    const url = `${baseUrl}/data_ingestion/update_model/${encodeURIComponent(modelId)}?${query.toString()}`
 
     const resp = await fetch(url, { method: 'POST' })
     const text = await resp.text()
