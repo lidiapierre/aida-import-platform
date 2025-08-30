@@ -98,13 +98,26 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Insert media rows
+    // Deduplicate media rows in-memory by (model_id, link)
+    const seenMediaKeys = new Set<string>()
+    const dedupedMediaRows: { model_id: any; link: string }[] = []
+    for (const r of mediaRows) {
+      const k = `${r.model_id}||${r.link}`
+      if (seenMediaKeys.has(k)) continue
+      seenMediaKeys.add(k)
+      dedupedMediaRows.push(r)
+    }
+
+    // Insert media rows using upsert to avoid unique constraint violations on (model_id, link)
     let mediaInserted = 0
-    for (let i = 0; i < mediaRows.length; i += BATCH_SIZE) {
-      const batch = mediaRows.slice(i, i + BATCH_SIZE)
-      const { data, error } = await supabase.from('models_media').insert(batch).select('model_id,link')
+    for (let i = 0; i < dedupedMediaRows.length; i += BATCH_SIZE) {
+      const batch = dedupedMediaRows.slice(i, i + BATCH_SIZE)
+      const { data, error } = await supabase
+        .from('models_media')
+        .upsert(batch, { onConflict: 'model_id,link', ignoreDuplicates: true })
+        .select('model_id,link')
       if (error) {
-        return NextResponse.json({ success: false, message: `Media insert failed: ${error.message}` }, { status: 500 })
+        return NextResponse.json({ success: false, message: `Media insert failed: ${error.message}`, data: { code: (error as any).code, details: (error as any).details, hint: (error as any).hint } }, { status: 500 })
       }
       mediaInserted += data?.length || 0
     }
