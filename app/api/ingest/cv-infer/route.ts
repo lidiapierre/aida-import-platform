@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { ingestConfig } from '../config'
+import { createClient } from '@supabase/supabase-js'
 
 export async function POST(req: NextRequest) {
   try {
@@ -7,6 +8,43 @@ export async function POST(req: NextRequest) {
     const modelId = body?.model_id || body?.modelId
     if (!modelId) {
       return NextResponse.json({ success: false, message: 'Missing model_id' }, { status: 400 })
+    }
+
+    // Pre-checks against Supabase: skip if cv_infer already TRUE or if no medias exist
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL as string
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY as string
+    if (!supabaseUrl || !supabaseKey) {
+      return NextResponse.json({ success: false, message: 'Supabase environment variables are not set' }, { status: 500 })
+    }
+    const supabase = createClient(supabaseUrl, supabaseKey)
+
+    const { data: modelRow, error: modelErr } = await supabase
+      .from('models')
+      .select('id, cv_infer')
+      .eq('id', modelId)
+      .maybeSingle()
+
+    if (modelErr) {
+      return NextResponse.json({ success: false, message: `Failed to fetch model: ${modelErr.message}` }, { status: 500 })
+    }
+    if (!modelRow) {
+      return NextResponse.json({ success: false, message: 'Model not found' }, { status: 404 })
+    }
+
+    if (modelRow.cv_infer === true) {
+      return NextResponse.json({ success: true, skipped: true, reason: 'cv_infer already TRUE' })
+    }
+
+    const { count: mediaCount, error: mediaErr } = await supabase
+      .from('models_media')
+      .select('id', { count: 'exact', head: true })
+      .eq('model_id', modelId)
+
+    if (mediaErr) {
+      return NextResponse.json({ success: false, message: `Failed to check medias: ${mediaErr.message}` }, { status: 500 })
+    }
+    if ((mediaCount || 0) === 0) {
+      return NextResponse.json({ success: true, skipped: true, reason: 'no medias for model' })
     }
 
     const baseUrl = ingestConfig.baseUrl

@@ -54,41 +54,76 @@ export async function POST(req: NextRequest) {
     let insertedTotal = 0
     const insertedIds: Array<string> = []
 
-    // Simply insert all model rows; no conflict handling
-    for (let i = 0; i < modelRows.length; i += BATCH_SIZE) {
-      const batch = modelRows.slice(i, i + BATCH_SIZE)
+    // Preload existing models for this data_source to avoid duplicate inserts based on (data_source, model_name, instagram_account)
+    const { data: existingModels, error: existingFetchErr } = await supabase
+      .from('models')
+      .select('id,model_name,data_source,instagram_account')
+      .eq('data_source', dataSource)
+
+    if (existingFetchErr) {
+      return NextResponse.json({ success: false, message: `Failed to fetch existing models: ${existingFetchErr.message}` }, { status: 500 })
+    }
+
+    const normalizeInsta = (v: any) => {
+      const s = (v ?? '').toString().trim()
+      return s === '' ? null : s
+    }
+
+    const existingKeyToId = new Map<string, any>((existingModels || []).map((m: any) => {
+      const key = `${m.data_source}||${m.model_name}||${normalizeInsta(m.instagram_account)}`
+      return [key, m.id]
+    }))
+
+    // Partition rows into new vs existing by the unique triplet
+    const rowsToInsert: any[] = []
+    const keyToId = new Map<string, any>()
+
+    for (const m of modelRows) {
+      const key = `${m.data_source}||${m.model_name}||${normalizeInsta(m.instagram_account)}`
+      const existingId = existingKeyToId.get(key)
+      if (existingId) {
+        keyToId.set(key, existingId)
+        continue
+      }
+      rowsToInsert.push(m)
+    }
+
+    // Insert only new models
+    for (let i = 0; i < rowsToInsert.length; i += BATCH_SIZE) {
+      const batch = rowsToInsert.slice(i, i + BATCH_SIZE)
       const { data, error } = await supabase
         .from('models')
         .insert(batch)
-        .select('id,model_name,data_source')
+        .select('id,model_name,data_source,instagram_account')
       if (error) {
         return NextResponse.json({ success: false, message: `Models insert failed: ${error.message}` }, { status: 500 })
       }
       insertedTotal += data?.length || 0
       for (const row of data || []) {
-        if (row?.id != null) insertedIds.push(String(row.id))
+        if (row?.id != null) {
+          insertedIds.push(String(row.id))
+          const k = `${row.data_source}||${row.model_name}||${normalizeInsta(row.instagram_account)}`
+          keyToId.set(k, row.id)
+        }
       }
     }
 
-    // Fetch ids for all models of this data_source to link media and agencies
-    const { data: modelsForSource, error: fetchErr } = await supabase
-      .from('models')
-      .select('id,model_name,data_source')
-      .eq('data_source', dataSource)
-    if (fetchErr) {
-      return NextResponse.json({ success: false, message: `Failed to fetch models for linking: ${fetchErr.message}` }, { status: 500 })
+    // Fetch ids for all models of this data_source to link media and agencies (ensure coverage for rows that already existed)
+    for (const m of modelRows) {
+      const k = `${m.data_source}||${m.model_name}||${normalizeInsta(m.instagram_account)}`
+      if (!keyToId.has(k)) {
+        const maybeId = existingKeyToId.get(k)
+        if (maybeId) keyToId.set(k, maybeId)
+      }
     }
-    const keyToId = new Map<string, any>(
-      (modelsForSource || []).map((m: any) => [`${m.model_name}||${m.data_source}`, m.id])
-    )
 
     // Prepare media rows
     const mediaRows: { model_id: any; link: string }[] = []
     for (const t of transformed) {
       const links = t.models_media || []
       if (!links.length) continue
-      const key = `${t.models.model_name}||${t.models.data_source}`
-      const id = keyToId.get(key)
+      const k = `${t.models.data_source}||${t.models.model_name}||${normalizeInsta(t.models.instagram_account)}`
+      const id = keyToId.get(k)
       if (!id) continue
       for (const media of links) {
         const link = (media as any).link || (media as any).url
@@ -122,14 +157,23 @@ export async function POST(req: NextRequest) {
       mediaInserted += data?.length || 0
     }
 
+    // Compute summary counts
+    const processedModels = modelRows.length
+    const insertedModels = insertedTotal
+    const existingModelsMatched = Math.max(processedModels - insertedModels, 0)
+
+    const processedMedias = dedupedMediaRows.length
+    const insertedMedias = mediaInserted
+    const existingMediasMatched = Math.max(processedMedias - insertedMedias, 0)
+
     // Optionally insert model-agency relationships
     let agenciesLinked = 0
     const agencyId = agencyIdStr ? (agencyIdStr as any) : null
     if (agencyId) {
       const relRows: { model_id: any; agency_id: any }[] = []
       for (const t of transformed) {
-        const key = `${t.models.model_name}||${t.models.data_source}`
-        const id = keyToId.get(key)
+        const k = `${t.models.data_source}||${t.models.model_name}||${normalizeInsta(t.models.instagram_account)}`
+        const id = keyToId.get(k)
         if (!id) continue
         relRows.push({ model_id: id as any, agency_id: agencyId })
       }
@@ -174,14 +218,14 @@ export async function POST(req: NextRequest) {
 
       return NextResponse.json({
         success: true,
-        message: `Upsert complete: models ${insertedTotal}/${modelRows.length}, media ${mediaInserted}, agency linking ${agenciesLinked > 0 ? 'succeeded' : agenciesPlanned > 0 ? 'skipped/duplicate' : 'skipped'}`,
+        message: `Processed ${processedModels} models (inserted ${insertedModels}, existing ${existingModelsMatched}); processed ${processedMedias} medias (inserted ${insertedMedias}, existing ${existingMediasMatched}). Agency linking succeeded.`,
         data: { modelIds: insertedIds }
       })
     }
 
     return NextResponse.json({
       success: true,
-      message: `Upsert complete: models ${insertedTotal}/${modelRows.length}, media ${mediaInserted}, agency linking skipped`,
+      message: `Processed ${processedModels} models (inserted ${insertedModels}, existing ${existingModelsMatched}); processed ${processedMedias} medias (inserted ${insertedMedias}, existing ${existingMediasMatched}).`,
       data: { modelIds: insertedIds }
     })
   } catch (e: any) {
