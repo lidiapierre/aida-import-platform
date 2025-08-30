@@ -5,7 +5,7 @@ export const ingestConfig = {
   // Default optional flags for update_model endpoint
   updateModelParams: {
     use_claude_basic: false,
-    use_claude_job_types: false,
+    use_claude_job_types: true,
   },
 } as const
 
