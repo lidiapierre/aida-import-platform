@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { MappingSchema, parseCsvAll, applyMappingToRow, MODELS_FIELDS } from '../shared'
 import { inferGenderFromFilename, inferModelBoardFromFilename } from '../shared'
-import { ingestConfig } from '../config'
 
 function isLikelyValidMediaLink(link: string): boolean {
   try {
@@ -109,7 +108,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Fetch ids for all models of this data_source to link media and agencies (ensure coverage for rows that already existed)
+    // Ensure ids for all spreadsheet rows
     for (const m of modelRows) {
       const k = `${m.data_source}||${m.model_name}||${normalizeInsta(m.instagram_account)}`
       if (!keyToId.has(k)) {
@@ -167,57 +166,11 @@ export async function POST(req: NextRequest) {
     const insertedMedias = mediaInserted
     const existingMediasMatched = Math.max(processedMedias - insertedMedias, 0)
 
-    // CV infer step for all models from the spreadsheet (skip update_model if cv_infer TRUE; always run photos if medias exist)
-    const allModelIds: any[] = []
-    for (const t of transformed) {
+    // Build allModelIds for client-side follow-up (CV infer/photos)
+    const allModelIds = Array.from(new Set(transformed.map((t) => {
       const k = `${t.models.data_source}||${t.models.model_name}||${normalizeInsta(t.models.instagram_account)}`
-      const id = keyToId.get(k)
-      if (id) allModelIds.push(id)
-    }
-    const uniqueModelIds = Array.from(new Set(allModelIds))
-
-    if (uniqueModelIds.length > 0) {
-      const { data: statusRows, error: statusErr } = await supabase
-        .from('models')
-        .select('id, cv_infer')
-        .in('id', uniqueModelIds as any)
-      if (statusErr) {
-        return NextResponse.json({ success: false, message: `Failed to precheck cv_infer: ${statusErr.message}` }, { status: 500 })
-      }
-      const idToCvInfer = new Map<any, boolean>((statusRows || []).map((r: any) => [r.id, !!r.cv_infer]))
-
-      const baseUrl = ingestConfig.baseUrl
-      const params = ingestConfig.updateModelParams
-      const query = new URLSearchParams({
-        use_claude_basic: String(params.use_claude_basic),
-        use_claude_job_types: String(params.use_claude_job_types),
-      })
-
-      for (const id of uniqueModelIds) {
-        try {
-          const { count: mediaCount, error: mediaErr2 } = await supabase
-            .from('models_media')
-            .select('id', { count: 'exact', head: true })
-            .eq('model_id', id)
-          if (mediaErr2) continue
-          if ((mediaCount || 0) === 0) continue
-
-          const cvAlready = idToCvInfer.get(id) === true
-          if (!cvAlready) {
-            const url = `${baseUrl}/data_ingestion/update_model/${encodeURIComponent(id)}?${query.toString()}`
-            await fetch(url, { method: 'POST' })
-          }
-          try {
-            const photosUrl = `${baseUrl}/data_ingestion/update_model_photos`
-            await fetch(photosUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ model_id: id, claude: true })
-            })
-          } catch {}
-        } catch {}
-      }
-    }
+      return keyToId.get(k)
+    }).filter(Boolean)))
 
     // Optionally insert model-agency relationships
     let agenciesLinked = 0
@@ -272,14 +225,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         success: true,
         message: `Processed ${processedModels} models (inserted ${insertedModels}, existing ${existingModelsMatched}); processed ${processedMedias} medias (inserted ${insertedMedias}, existing ${existingMediasMatched}). Agency linking succeeded.`,
-        data: { modelIds: insertedIds }
+        data: { insertedModelIds: insertedIds, allModelIds, modelIds: insertedIds }
       })
     }
 
     return NextResponse.json({
       success: true,
       message: `Processed ${processedModels} models (inserted ${insertedModels}, existing ${existingModelsMatched}); processed ${processedMedias} medias (inserted ${insertedMedias}, existing ${existingMediasMatched}).`,
-      data: { modelIds: insertedIds }
+      data: { insertedModelIds: insertedIds, allModelIds, modelIds: insertedIds }
     })
   } catch (e: any) {
     return NextResponse.json({ success: false, message: e?.message || 'Internal error' }, { status: 500 })

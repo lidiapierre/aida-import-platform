@@ -5,12 +5,14 @@ import { createClient } from '@supabase/supabase-js'
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}))
-    const modelId = body?.model_id || body?.modelId
-    if (!modelId) {
-      return NextResponse.json({ success: false, message: 'Missing model_id' }, { status: 400 })
+    const singleId = body?.model_id || body?.modelId
+    const manyIds = Array.isArray(body?.model_ids) ? body.model_ids : Array.isArray(body?.modelIds) ? body.modelIds : null
+
+    const ids: any[] = manyIds && manyIds.length ? manyIds : singleId ? [singleId] : []
+    if (!ids.length) {
+      return NextResponse.json({ success: false, message: 'Missing model_id or model_ids' }, { status: 400 })
     }
 
-    // Pre-checks against Supabase: skip if cv_infer already TRUE or if no medias exist
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL as string
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY as string
     if (!supabaseUrl || !supabaseKey) {
@@ -18,74 +20,68 @@ export async function POST(req: NextRequest) {
     }
     const supabase = createClient(supabaseUrl, supabaseKey)
 
-    const { data: modelRow, error: modelErr } = await supabase
-      .from('models')
-      .select('id, cv_infer')
-      .eq('id', modelId)
-      .maybeSingle()
-
-    if (modelErr) {
-      return NextResponse.json({ success: false, message: `Failed to fetch model: ${modelErr.message}` }, { status: 500 })
-    }
-    if (!modelRow) {
-      return NextResponse.json({ success: false, message: 'Model not found' }, { status: 404 })
-    }
-
-    if (modelRow.cv_infer === true) {
-      return NextResponse.json({ success: true, skipped: true, reason: 'cv_infer already TRUE' })
-    }
-
-    const { count: mediaCount, error: mediaErr } = await supabase
-      .from('models_media')
-      .select('id', { count: 'exact', head: true })
-      .eq('model_id', modelId)
-
-    if (mediaErr) {
-      return NextResponse.json({ success: false, message: `Failed to check medias: ${mediaErr.message}` }, { status: 500 })
-    }
-    if ((mediaCount || 0) === 0) {
-      return NextResponse.json({ success: true, skipped: true, reason: 'no medias for model' })
-    }
-
     const baseUrl = ingestConfig.baseUrl
     const params = ingestConfig.updateModelParams
     const query = new URLSearchParams({
       use_claude_basic: String(params.use_claude_basic),
       use_claude_job_types: String(params.use_claude_job_types),
     })
-    const url = `${baseUrl}/data_ingestion/update_model/${encodeURIComponent(modelId)}?${query.toString()}`
 
-    const resp = await fetch(url, { method: 'POST' })
-    const text = await resp.text()
+    const processOne = async (modelId: any) => {
+      try {
+        const { data: modelRow, error: modelErr } = await supabase
+          .from('models')
+          .select('id, cv_infer')
+          .eq('id', modelId)
+          .maybeSingle()
+        if (modelErr) return { model_id: modelId, success: false, message: `Failed to fetch model: ${modelErr.message}` }
+        if (!modelRow) return { model_id: modelId, success: false, message: 'Model not found' }
 
-    let parsed: any
-    try {
-      parsed = JSON.parse(text)
-    } catch {
-      parsed = { raw: text }
-    }
+        const { count: mediaCount, error: mediaErr } = await supabase
+          .from('models_media')
+          .select('id', { count: 'exact', head: true })
+          .eq('model_id', modelId)
+        if (mediaErr) return { model_id: modelId, success: false, message: `Failed to check medias: ${mediaErr.message}` }
+        if ((mediaCount || 0) === 0) return { model_id: modelId, success: true, skipped: true, reason: 'no medias for model', didUpdateModel: false, didUpdatePhotos: false }
 
-    // Appel à update_model_photos APRÈS que update_model ait fini
-    try {
-      const photosUrl = `${baseUrl}/data_ingestion/update_model_photos`
-      const photosResp = await fetch(photosUrl, { 
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ model_id: modelId, claude: true })
-      })
-      
-      if (photosResp.ok) {
-        console.log('update_model_photos successful for model:', modelId)
-      } else {
-        console.warn('update_model_photos failed for model:', modelId, 'status:', photosResp.status)
+        let didUpdateModel = false
+        if (modelRow.cv_infer !== true) {
+          const url = `${baseUrl}/data_ingestion/update_model/${encodeURIComponent(modelId)}?${query.toString()}`
+          try {
+            const resp = await fetch(url, { method: 'POST' })
+            didUpdateModel = resp.ok
+          } catch {}
+        }
+
+        let didUpdatePhotos = false
+        try {
+          const photosUrl = `${baseUrl}/data_ingestion/update_model_photos`
+          const photosResp = await fetch(photosUrl, { 
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ model_id: modelId, claude: true })
+          })
+          didUpdatePhotos = photosResp.ok
+        } catch {}
+
+        return { model_id: modelId, success: true, skipped: false, didUpdateModel, didUpdatePhotos }
+      } catch (err: any) {
+        return { model_id: modelId, success: false, message: err?.message || 'Unexpected error' }
       }
-    } catch (photosError) {
-      console.error('Error calling update_model_photos:', photosError)
     }
 
-    return NextResponse.json({ success: resp.ok, status: resp.status, data: parsed })
+    const results = [] as any[]
+    for (const id of ids) {
+      results.push(await processOne(id))
+    }
+
+    if (ids.length === 1) {
+      return NextResponse.json({ success: results[0].success, data: results[0] })
+    } else {
+      return NextResponse.json({ success: true, data: results })
+    }
   } catch (e: any) {
     return NextResponse.json({ success: false, message: e?.message || 'Internal error' }, { status: 500 })
   }
