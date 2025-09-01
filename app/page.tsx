@@ -260,31 +260,46 @@ export default function Home() {
     setInferenceLogs([])
     cancelCvRef.current = false
 
-    try {
-      const controller = new AbortController()
-      abortControllerRef.current = controller
-      const resp = await fetch('/api/ingest/cv-infer', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model_ids: pendingModelIds }),
-        signal: controller.signal,
-      })
-      const json = await resp.json()
-      const results = Array.isArray(json?.data) ? json.data : []
-      const logs = (results as any[]).map((r) => ({
-        modelId: r?.model_id ?? 'unknown',
-        success: !!r?.success,
-        status: resp.status,
-        data: r,
-      }))
-      setInferenceLogs(logs)
-    } catch (e: any) {
-      const aborted = e?.name === 'AbortError'
-      setInferenceLogs(pendingModelIds.map((id) => ({ modelId: id, success: false, status: 0, data: { error: aborted ? 'aborted' : (e?.message || 'network error') } })))
-    } finally {
-      abortControllerRef.current = null
-      setIsInferring(false)
+    console.log('[cv-infer] starting batch for', pendingModelIds.length, 'models')
+
+    for (const id of pendingModelIds) {
+      if (cancelCvRef.current) break
+      try {
+        const controller = new AbortController()
+        abortControllerRef.current = controller
+        console.log('[cv-infer] requesting for model', id)
+        const resp = await fetch('/api/ingest/cv-infer', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model_id: id }),
+          signal: controller.signal,
+        })
+        const json = await resp.json()
+        console.log('[cv-infer] response for model', id, 'status', resp.status, 'payload', json)
+        setInferenceLogs((prev) => [
+          ...prev,
+          {
+            modelId: id,
+            success: json?.success ?? resp.ok,
+            status: json?.status ?? resp.status,
+            data: json?.data ?? null,
+          },
+        ])
+      } catch (e: any) {
+        const aborted = e?.name === 'AbortError'
+        console.error('[cv-infer] error for model', id, aborted ? '(aborted)' : e)
+        setInferenceLogs((prev) => [
+          ...prev,
+          { modelId: id, success: false, status: 0, data: { error: aborted ? 'aborted' : (e?.message || 'network error') } },
+        ])
+        if (cancelCvRef.current) break
+      } finally {
+        abortControllerRef.current = null
+      }
     }
+
+    console.log('[cv-infer] finished batch')
+    setIsInferring(false)
   }, [pendingModelIds])
 
   const cancelCvInference = useCallback(() => {
