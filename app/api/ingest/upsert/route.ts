@@ -48,7 +48,10 @@ export async function POST(req: NextRequest) {
 
     const supabase = createClient(supabaseUrl, supabaseKey)
 
-    const modelRows = transformed.map((t) => t.models)
+    const modelRows = transformed.map((t) => {
+      const { profile_url, ...rest } = t.models as any
+      return rest
+    })
 
     const BATCH_SIZE = 500
     let insertedTotal = 0
@@ -176,12 +179,13 @@ export async function POST(req: NextRequest) {
     let agenciesLinked = 0
     const agencyId = agencyIdStr ? (agencyIdStr as any) : null
     if (agencyId) {
-      const relRows: { model_id: any; agency_id: any }[] = []
+      const relRows: { model_id: any; agency_id: any; profile_url?: string | null }[] = []
       for (const t of transformed) {
         const k = `${t.models.data_source}||${t.models.model_name}||${normalizeInsta(t.models.instagram_account)}`
         const id = keyToId.get(k)
         if (!id) continue
-        relRows.push({ model_id: id as any, agency_id: agencyId })
+        const profileUrl = (t.models as any).profile_url ?? null
+        relRows.push({ model_id: id as any, agency_id: agencyId, profile_url: profileUrl })
       }
 
       // Deduplicate by model_id to avoid redundant inserts
