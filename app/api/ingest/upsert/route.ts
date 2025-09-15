@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
 import { MappingSchema, parseCsvAll, applyMappingToRow, MODELS_FIELDS } from '../shared'
 import { inferGenderFromFilename, inferModelBoardFromFilename } from '../shared'
+import { dataSourceExists } from '../shared'
+import { ingestConfig } from '../config'
 
 function isLikelyValidMediaLink(link: string): boolean {
   try {
     const u = new URL(link)
-    // Heuristic: require at least 4 consecutive digits somewhere in the path or query
     return /\d{4,}/.test(u.pathname + u.search)
   } catch {
     return false
@@ -24,11 +24,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, message: 'Missing file or mapping' }, { status: 400 })
     }
 
+    // Require agency_id for external upsert_model API (UUID expected)
+    if (!agencyIdStr) {
+      return NextResponse.json({ success: false, message: 'agency_id is required' }, { status: 400 })
+    }
+
+    const dataSource = (file as any).name || 'upload.csv'
+
+    // Early guard: if data_source already exists, stop with 409
+    const exists = await dataSourceExists(dataSource)
+    if (exists) {
+      return NextResponse.json({ success: false, message: `This file has already been processed (data_source: ${dataSource}). Delete it first to reprocess.`, data: { data_source: dataSource, exists: true } }, { status: 409 })
+    }
+
     const mapping = MappingSchema.parse(JSON.parse(mappingStr))
 
     const { rows } = await parseCsvAll(file)
 
-    const dataSource = (file as any).name || 'upload.csv'
     const providedGenderRaw = String(formData.get('gender') || '').trim()
     const allowedGenders = (MODELS_FIELDS as any).gender.values as string[]
     const providedGender = allowedGenders.includes(providedGenderRaw) ? providedGenderRaw : null
@@ -40,203 +52,57 @@ export async function POST(req: NextRequest) {
 
     const transformed = rows.map((row) => applyMappingToRow(row, mapping, { gender: inferredGender, modelBoard: inferredModelBoard || null, dataSource }))
 
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL as string
-    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY as string
-    if (!supabaseUrl || !supabaseKey) {
-      return NextResponse.json({ success: false, message: 'Supabase environment variables are not set' }, { status: 500 })
-    }
+    const baseUrl = ingestConfig.baseUrl.replace(/\/$/, '')
 
-    const supabase = createClient(supabaseUrl, supabaseKey)
+    const allModelIds: Array<string | number> = []
+    const upsertedModelIds: Array<string | number> = []
+    let processed = 0
+    let succeeded = 0
+    let failed = 0
 
-    const modelRows = transformed.map((t) => {
-      const { profile_url, ...rest } = t.models as any
-      return rest
-    })
-
-    const BATCH_SIZE = 500
-    let insertedTotal = 0
-    const insertedIds: Array<string> = []
-
-    // Preload existing models for this data_source to avoid duplicate inserts based on (data_source, model_name, instagram_account)
-    const { data: existingModels, error: existingFetchErr } = await supabase
-      .from('models')
-      .select('id,model_name,data_source,instagram_account')
-      .eq('data_source', dataSource)
-
-    if (existingFetchErr) {
-      return NextResponse.json({ success: false, message: `Failed to fetch existing models: ${existingFetchErr.message}` }, { status: 500 })
-    }
-
-    const normalizeInsta = (v: any) => {
-      const s = (v ?? '').toString().trim()
-      return s === '' ? null : s
-    }
-
-    const existingKeyToId = new Map<string, any>((existingModels || []).map((m: any) => {
-      const key = `${m.data_source}||${m.model_name}||${normalizeInsta(m.instagram_account)}`
-      return [key, m.id]
-    }))
-
-    // Partition rows into new vs existing by the unique triplet
-    const rowsToInsert: any[] = []
-    const keyToId = new Map<string, any>()
-
-    for (const m of modelRows) {
-      const key = `${m.data_source}||${m.model_name}||${normalizeInsta(m.instagram_account)}`
-      const existingId = existingKeyToId.get(key)
-      if (existingId) {
-        keyToId.set(key, existingId)
-        continue
-      }
-      rowsToInsert.push(m)
-    }
-
-    // Insert only new models
-    for (let i = 0; i < rowsToInsert.length; i += BATCH_SIZE) {
-      const batch = rowsToInsert.slice(i, i + BATCH_SIZE)
-      const { data, error } = await supabase
-        .from('models')
-        .insert(batch)
-        .select('id,model_name,data_source,instagram_account')
-      if (error) {
-        return NextResponse.json({ success: false, message: `Models insert failed: ${error.message}` }, { status: 500 })
-      }
-      insertedTotal += data?.length || 0
-      for (const row of data || []) {
-        if (row?.id != null) {
-          insertedIds.push(String(row.id))
-          const k = `${row.data_source}||${row.model_name}||${normalizeInsta(row.instagram_account)}`
-          keyToId.set(k, row.id)
-        }
-      }
-    }
-
-    // Ensure ids for all spreadsheet rows
-    for (const m of modelRows) {
-      const k = `${m.data_source}||${m.model_name}||${normalizeInsta(m.instagram_account)}`
-      if (!keyToId.has(k)) {
-        const maybeId = existingKeyToId.get(k)
-        if (maybeId) keyToId.set(k, maybeId)
-      }
-    }
-
-    // Prepare media rows
-    const mediaRows: { model_id: any; link: string }[] = []
     for (const t of transformed) {
-      const links = t.models_media || []
-      if (!links.length) continue
-      const k = `${t.models.data_source}||${t.models.model_name}||${normalizeInsta(t.models.instagram_account)}`
-      const id = keyToId.get(k)
-      if (!id) continue
-      for (const media of links) {
-        const link = (media as any).link || (media as any).url
-        if (!link) continue
-        if (!isLikelyValidMediaLink(link)) continue
-        mediaRows.push({ model_id: id, link })
+      processed++
+      const model = { ...(t.models as any) }
+
+      // Build model_media list and apply validity heuristic
+      const modelMedia = (t.models_media || [])
+        .map((m: any) => m?.link || m?.url)
+        .filter((x: any) => typeof x === 'string' && x.trim() !== '')
+        .filter((link: string) => isLikelyValidMediaLink(link))
+
+      // Prepare payload for external API per spec
+      const payload: any = {
+        record: model,
+        agency_id: agencyIdStr,
       }
-    }
+      if (modelMedia.length) payload.model_media = modelMedia
 
-    // Deduplicate media rows in-memory by (model_id, link)
-    const seenMediaKeys = new Set<string>()
-    const dedupedMediaRows: { model_id: any; link: string }[] = []
-    for (const r of mediaRows) {
-      const k = `${r.model_id}||${r.link}`
-      if (seenMediaKeys.has(k)) continue
-      seenMediaKeys.add(k)
-      dedupedMediaRows.push(r)
-    }
-
-    // Insert media rows using upsert to avoid unique constraint violations on (model_id, link)
-    let mediaInserted = 0
-    for (let i = 0; i < dedupedMediaRows.length; i += BATCH_SIZE) {
-      const batch = dedupedMediaRows.slice(i, i + BATCH_SIZE)
-      const { data, error } = await supabase
-        .from('models_media')
-        .upsert(batch, { onConflict: 'model_id,link', ignoreDuplicates: true })
-        .select('model_id,link')
-      if (error) {
-        return NextResponse.json({ success: false, message: `Media insert failed: ${error.message}`, data: { code: (error as any).code, details: (error as any).details, hint: (error as any).hint } }, { status: 500 })
-      }
-      mediaInserted += data?.length || 0
-    }
-
-    // Compute summary counts
-    const processedModels = modelRows.length
-    const insertedModels = insertedTotal
-    const existingModelsMatched = Math.max(processedModels - insertedModels, 0)
-
-    const processedMedias = dedupedMediaRows.length
-    const insertedMedias = mediaInserted
-    const existingMediasMatched = Math.max(processedMedias - insertedMedias, 0)
-
-    // Build allModelIds for client-side follow-up (CV infer/photos)
-    const allModelIds = Array.from(new Set(transformed.map((t) => {
-      const k = `${t.models.data_source}||${t.models.model_name}||${normalizeInsta(t.models.instagram_account)}`
-      return keyToId.get(k)
-    }).filter(Boolean)))
-
-    // Optionally insert model-agency relationships
-    let agenciesLinked = 0
-    const agencyId = agencyIdStr ? (agencyIdStr as any) : null
-    if (agencyId) {
-      const relRows: { model_id: any; agency_id: any; profile_url?: string | null }[] = []
-      for (const t of transformed) {
-        const k = `${t.models.data_source}||${t.models.model_name}||${normalizeInsta(t.models.instagram_account)}`
-        const id = keyToId.get(k)
-        if (!id) continue
-        const profileUrl = (t.models as any).profile_url ?? null
-        relRows.push({ model_id: id as any, agency_id: agencyId, profile_url: profileUrl })
-      }
-
-      // Deduplicate by model_id to avoid redundant inserts
-      const modelIds = Array.from(new Set(relRows.map((r) => r.model_id))).filter(Boolean)
-
-      // Fetch existing links for this agency to skip duplicates without relying on DB constraints
-      const { data: existingLinks, error: existingErr } = await supabase
-        .from('models_agencies')
-        .select('model_id')
-        .eq('agency_id', agencyId)
-        .in('model_id', modelIds)
-
-      if (existingErr) {
-        return NextResponse.json(
-          { success: false, message: `Model-agency precheck failed: ${existingErr.message || 'unknown error'}`, data: { code: (existingErr as any).code, details: (existingErr as any).details, hint: (existingErr as any).hint } },
-          { status: 500 }
-        )
-      }
-
-      const existingSet = new Set((existingLinks || []).map((e: any) => e.model_id))
-      const toInsert = relRows.filter((r) => !existingSet.has(r.model_id))
-      const agenciesPlanned = relRows.length
-      const agenciesAlreadyLinked = relRows.length - toInsert.length
-
-      // Insert only new links
-      for (let i = 0; i < toInsert.length; i += BATCH_SIZE) {
-        const batch = toInsert.slice(i, i + BATCH_SIZE)
-        const { data, error } = await supabase
-          .from('models_agencies')
-          .insert(batch)
-          .select('model_id,agency_id')
-        if (error) {
-          return NextResponse.json(
-            { success: false, message: `Model-agency insert failed: ${error.message || 'unknown error'}`, data: { code: (error as any).code, details: (error as any).details, hint: (error as any).hint } },
-            { status: 500 }
-          )
+      try {
+        const resp = await fetch(`${baseUrl}/data_ingestion/upsert_model`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        const json = await resp.json().catch(() => ({}))
+        if (!resp.ok || json?.success === false) {
+          failed++
+          continue
         }
-        agenciesLinked += data?.length || 0
+        succeeded++
+        const returnedId = json?.model_id ?? json?.data?.model_id ?? json?.id ?? json?.data?.id
+        if (returnedId != null) {
+          allModelIds.push(returnedId)
+          upsertedModelIds.push(returnedId)
+        }
+      } catch {
+        failed++
       }
-
-      return NextResponse.json({
-        success: true,
-        message: `Processed ${processedModels} models (inserted ${insertedModels}, existing ${existingModelsMatched}); processed ${processedMedias} medias (inserted ${insertedMedias}, existing ${existingMediasMatched}). Agency linking succeeded.`,
-        data: { insertedModelIds: insertedIds, allModelIds, modelIds: insertedIds }
-      })
     }
 
     return NextResponse.json({
       success: true,
-      message: `Processed ${processedModels} models (inserted ${insertedModels}, existing ${existingModelsMatched}); processed ${processedMedias} medias (inserted ${insertedMedias}, existing ${existingMediasMatched}).`,
-      data: { insertedModelIds: insertedIds, allModelIds, modelIds: insertedIds }
+      message: `Processed ${processed} models via external upsert (succeeded ${succeeded}, failed ${failed}).`,
+      data: { insertedModelIds: upsertedModelIds, allModelIds, modelIds: upsertedModelIds }
     })
   } catch (e: any) {
     return NextResponse.json({ success: false, message: e?.message || 'Internal error' }, { status: 500 })

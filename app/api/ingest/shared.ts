@@ -1,5 +1,6 @@
 import Papa from 'papaparse'
 import { z } from 'zod'
+import { createClient } from '@supabase/supabase-js'
 
 export const MODELS_FIELDS = {
   model_name: { type: 'text' },
@@ -686,4 +687,17 @@ export function applyMappingToRow(
   }
 
   return { models, models_media: mediaRows }
+}
+
+export async function dataSourceExists(dataSource: string): Promise<boolean> {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL as string
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY as string
+  if (!supabaseUrl || !supabaseKey) return false
+  const supabase = createClient(supabaseUrl, supabaseKey)
+  const { count, error } = await supabase
+    .from('models')
+    .select('id', { count: 'exact', head: true })
+    .eq('data_source', dataSource)
+  if (error) return false
+  return (count || 0) > 0
 } 

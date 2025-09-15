@@ -1,6 +1,6 @@
 export const ingestConfig = {
   // Base URL for the model recommendation backend
-  baseUrl: 'https://modelrecommendation-d8fdaa3e6179.herokuapp.com',
+  baseUrl: process.env.NEXT_PUBLIC_INGEST_BASE_URL || 'https://modelrecommendation-d8fdaa3e6179.herokuapp.com',
 
   // Default optional flags for update_model endpoint
   updateModelParams: {

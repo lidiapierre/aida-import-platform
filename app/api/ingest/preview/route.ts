@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { MappingSchema, parseCsvSample, MODELS_FIELDS, MODELS_MEDIA_FIELDS, applyMappingToRow } from '../shared'
 import { inferGenderFromFilename, inferModelBoardFromFilename } from '../shared'
+import { dataSourceExists } from '../shared'
 
 export const runtime = 'nodejs'
 
@@ -156,7 +157,13 @@ export async function POST(req: NextRequest) {
     const formData = await req.formData()
     const file = formData.get('file') as unknown as File
     const dataSourceName = (file as any)?.name || 'upload.csv'
-    
+
+    // Early guard: if data_source already exists, stop with 409 to block the flow
+    const exists = await dataSourceExists(dataSourceName)
+    if (exists) {
+      return NextResponse.json({ success: false, message: `This file has already been processed (data_source: ${dataSourceName}). Delete it first to reprocess.`, data: { data_source: dataSourceName, exists: true } }, { status: 409 })
+    }
+
     // Allow client override for gender if provided
     const providedGenderRaw = String(formData.get('gender') || '').trim()
     const allowedGenders = (MODELS_FIELDS as any).gender.values as string[]

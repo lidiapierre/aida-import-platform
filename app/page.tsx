@@ -35,6 +35,31 @@ export default function Home() {
   const cancelCvRef = useRef<boolean>(false)
   const abortControllerRef = useRef<AbortController | null>(null)
 
+  // New: data_source conflict handling
+  const [dataSourceConflict, setDataSourceConflict] = useState<{ exists: boolean; data_source: string } | null>(null)
+  const [isDeletingSource, setIsDeletingSource] = useState<boolean>(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+
+  const checkDataSource = useCallback(async (csv: File) => {
+    try {
+      const form = new FormData()
+      form.append('file', csv)
+      const resp = await fetch('/api/ingest/check', { method: 'POST', body: form })
+      const json = await resp.json()
+      if (resp.ok && json?.success) {
+        if (json.data?.exists) {
+          setDataSourceConflict({ exists: true, data_source: json.data?.data_source })
+        } else {
+          setDataSourceConflict(null)
+        }
+      } else {
+        setDataSourceConflict(null)
+      }
+    } catch {
+      setDataSourceConflict(null)
+    }
+  }, [])
+
   const handleFileSelect = useCallback((selectedFile: File) => {
     if (selectedFile.type === 'text/csv' || selectedFile.name.endsWith('.csv')) {
       setFile(selectedFile)
@@ -62,13 +87,12 @@ export default function Home() {
       setSelectedGender(guess)
       setShowGenderPicker(!guess)
       setFeedback('')
+      // New: check data_source existence early
+      checkDataSource(selectedFile)
     } else {
-      setUploadResult({
-        success: false,
-        message: 'Please select a valid CSV file'
-      })
+      setUploadResult({ success: false, message: 'Please select a valid CSV file' })
     }
-  }, [])
+  }, [checkDataSource])
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -158,10 +182,12 @@ export default function Home() {
     e.preventDefault()
 
     if (!file) {
-      setUploadResult({
-        success: false,
-        message: 'Please select a CSV file'
-      })
+      setUploadResult({ success: false, message: 'Please select a CSV file' })
+      return
+    }
+
+    if (dataSourceConflict?.exists) {
+      setUploadResult({ success: false, message: `This file has already been processed (${dataSourceConflict.data_source}). Delete it first to reprocess.` })
       return
     }
 
@@ -183,29 +209,23 @@ export default function Home() {
       if (selectedGender) formData.append('gender', selectedGender)
 
       // Step 1: ask server to parse a sample and get agent-proposed mapping preview
-      const previewResp = await fetch('/api/ingest/preview', {
-        method: 'POST',
-        body: formData,
-      })
+      const previewResp = await fetch('/api/ingest/preview', { method: 'POST', body: formData })
 
       const previewJson = await previewResp.json()
 
       if (!previewResp.ok || !previewJson?.success) {
-        setUploadResult({
-          success: false,
-          message: previewJson?.message || 'Failed to prepare preview mapping.',
-          data: previewJson?.data
-        })
+        // Capture 409 conflict
+        if (previewResp.status === 409) {
+          setDataSourceConflict({ exists: true, data_source: (previewJson?.data?.data_source || file.name) })
+        }
+        setUploadResult({ success: false, message: previewJson?.message || 'Failed to prepare preview mapping.', data: previewJson?.data })
         return
       }
 
       setPreview(previewJson.data)
       setUploadResult({ success: true, message: 'Preview ready. Review and confirm to upsert.' })
     } catch (error) {
-      setUploadResult({
-        success: false,
-        message: 'Network error. Please check your connection and try again.'
-      })
+      setUploadResult({ success: false, message: 'Network error. Please check your connection and try again.' })
     } finally {
       setIsUploading(false)
     }
@@ -213,6 +233,10 @@ export default function Home() {
 
   const handleConfirm = async () => {
     if (!file || !preview) return
+    if (dataSourceConflict?.exists) {
+      setUploadResult({ success: false, message: `This file has already been processed (${dataSourceConflict.data_source}). Delete it first to reprocess.` })
+      return
+    }
     if (!selectedGender) {
       setUploadResult({ success: false, message: 'Please select a gender before upserting.' })
       return
@@ -231,7 +255,9 @@ export default function Home() {
         body: formData,
       })
       const json = await resp.json()
-
+      if (resp.status === 409) {
+        setDataSourceConflict({ exists: true, data_source: (json?.data?.data_source || file.name) })
+      }
       setUploadResult({
         success: json?.success ?? false,
         message: json?.message || (json?.success ? 'Upsert complete.' : 'Upsert failed.'),
@@ -334,6 +360,34 @@ export default function Home() {
     }
   }
 
+  const handlePurgeDataSource = useCallback(async () => {
+    if (!file && !dataSourceConflict?.data_source) return
+    const name = (file?.name || dataSourceConflict?.data_source) as string
+    if (!name) return
+    setIsDeletingSource(true)
+    setDeleteError(null)
+    try {
+      const resp = await fetch('/api/ingest/delete-by-source', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data_source: name })
+      })
+      const json = await resp.json()
+      if (!resp.ok || !json?.success) {
+        setDeleteError(json?.message || 'Failed to delete records for this data source.')
+        return
+      }
+      // After delete, clear conflict and recheck
+      setDataSourceConflict(null)
+      if (file) await checkDataSource(file)
+      setUploadResult({ success: true, message: json?.message || `Deleted records for ${name}. You may proceed.` })
+    } catch (e) {
+      setDeleteError('Network error while deleting data.')
+    } finally {
+      setIsDeletingSource(false)
+    }
+  }, [file, dataSourceConflict, checkDataSource])
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-md mx-auto">
@@ -401,6 +455,29 @@ export default function Home() {
                 </label>
               </div>
             </div>
+
+            {/* New: Data source conflict warning */}
+            {dataSourceConflict?.exists && (
+              <div className="p-4 rounded-md border border-red-300 bg-red-50">
+                <div className="text-sm text-red-800 font-semibold">This file was already processed.</div>
+                <div className="text-xs text-red-700 mt-1">
+                  Data for <span className="font-mono">{dataSourceConflict.data_source}</span> already exists in the database. To reprocess, you must delete all existing records for this data source. This action is destructive and cannot be undone.
+                </div>
+                <div className="mt-3 grid grid-cols-1 gap-2">
+                  <button
+                    type="button"
+                    onClick={handlePurgeDataSource}
+                    disabled={isDeletingSource}
+                    className="w-full py-2 px-4 rounded-md text-sm font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50"
+                  >
+                    {isDeletingSource ? 'Deleting…' : 'Delete all data for this file'}
+                  </button>
+                  {deleteError && (
+                    <div className="text-xs text-red-700">{deleteError}</div>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Agency selection step */}
             <div className="space-y-3">
