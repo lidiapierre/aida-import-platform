@@ -59,10 +59,23 @@ export async function POST(req: NextRequest) {
     let processed = 0
     let succeeded = 0
     let failed = 0
+    let skipped = 0
+    const warnings: Array<{ rowIndex: number; reason: string }> = []
 
-    for (const t of transformed) {
+    for (let i = 0; i < transformed.length; i++) {
+      const t = transformed[i]
       processed++
       const model = { ...(t.models as any) }
+
+      // Skip if both model_name and instagram_account are missing or empty
+      const nameEmpty = !model?.model_name || String(model.model_name).trim() === ''
+      const igEmpty = !model?.instagram_account || String(model.instagram_account).trim() === ''
+      if (nameEmpty && igEmpty) {
+        skipped++
+        warnings.push({ rowIndex: i + 1, reason: 'no model_name and no instagram_account' })
+        // treat as skipped, neither success nor failure
+        continue
+      }
 
       // Build model_media list and apply validity heuristic
       const modelMedia = (t.models_media || [])
@@ -101,8 +114,8 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: `Processed ${processed} models via external upsert (succeeded ${succeeded}, failed ${failed}).`,
-      data: { insertedModelIds: upsertedModelIds, allModelIds, modelIds: upsertedModelIds }
+      message: `Processed ${processed} models via external upsert (succeeded ${succeeded}, failed ${failed}, skipped ${skipped}).`,
+      data: { insertedModelIds: upsertedModelIds, allModelIds, modelIds: upsertedModelIds, warnings: { count: skipped, items: warnings } }
     })
   } catch (e: any) {
     return NextResponse.json({ success: false, message: e?.message || 'Internal error' }, { status: 500 })

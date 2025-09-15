@@ -31,11 +31,18 @@ export async function POST(req: NextRequest) {
       try {
         const { data: modelRow, error: modelErr } = await supabase
           .from('models')
-          .select('id, cv_infer')
+          .select('id, cv_infer, model_name, instagram_account')
           .eq('id', modelId)
           .maybeSingle()
         if (modelErr) return { model_id: modelId, success: false, message: `Failed to fetch model: ${modelErr.message}` }
         if (!modelRow) return { model_id: modelId, success: false, message: 'Model not found' }
+
+        // Skip if both identity fields are missing/empty
+        const nameEmpty = !modelRow?.model_name || String(modelRow.model_name).trim() === ''
+        const igEmpty = !modelRow?.instagram_account || String(modelRow.instagram_account).trim() === ''
+        if (nameEmpty && igEmpty) {
+          return { model_id: modelId, success: true, skipped: true, reason: 'no model_name and no instagram_account', didUpdateModel: false, didUpdatePhotos: false }
+        }
 
         const { count: mediaCount, error: mediaErr } = await supabase
           .from('models_media')
