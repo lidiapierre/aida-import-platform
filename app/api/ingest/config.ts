@@ -4,8 +4,10 @@ export const ingestConfig = {
 
   // Default optional flags for update_model endpoint
   updateModelParams: {
-    use_claude_basic: false,
-    use_claude_job_types: true,
+    // new provider-based params replacing the old boolean flags
+    // keep same behavior: basic=openai (was false for use_claude_basic), job_types=claude (was true for use_claude_job_types)
+    provider_basic: 'openai',
+    provider_job_types: 'claude',
   },
 } as const
 

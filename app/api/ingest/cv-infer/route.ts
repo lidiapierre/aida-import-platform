@@ -22,10 +22,9 @@ export async function POST(req: NextRequest) {
 
     const baseUrl = ingestConfig.baseUrl
     const params = ingestConfig.updateModelParams
-    const query = new URLSearchParams({
-      use_claude_basic: String(params.use_claude_basic),
-      use_claude_job_types: String(params.use_claude_job_types),
-    })
+    const query = new URLSearchParams()
+    if (params.provider_basic) query.set('provider_basic', String(params.provider_basic))
+    if (params.provider_job_types) query.set('provider_job_types', String(params.provider_job_types))
 
     const processOne = async (modelId: any) => {
       try {
