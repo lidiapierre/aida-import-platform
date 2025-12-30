@@ -7,24 +7,15 @@ export const MODELS_FIELDS = {
   profile_url: { type: 'url', description: "The model's profile URL" },
   min_estimated_age: { type: 'numeric', description: "The model's minimum estimated age in years" },
   max_estimated_age: { type: 'numeric', description: "The model's maximum estimated age in years" },
-  min_height: { type: 'numeric', description: "The model's minimum height in centimeters (cm)" },
-  max_height: { type: 'numeric', description: "The model's maximum height in centimeters (cm)" },
-  min_dress_size: { type: 'numeric', description: "The model's minimum dress size in UK size scale" },
-  max_dress_size: { type: 'numeric', description: "The model's maximum dress size in UK size scale" },
-  min_bra_size: { type: 'numeric', description: "The model's minimum bra size in UK size scale" },
-  max_bra_size: { type: 'numeric', description: "The model's maximum bra size in UK size scale" },
-  min_bikini_bottom_size: { type: 'numeric', description: "The model's minimum bikini bottom size in UK size scale" },
-  max_bikini_bottom_size: { type: 'numeric', description: "The model's maximum bikini bottom size in UK size scale" },
-  min_chest_bust: { type: 'numeric', description: "The model's minimum chest or bust measurement in centimeters (cm)" },
-  max_chest_bust: { type: 'numeric', description: "The model's maximum chest or bust measurement in centimeters (cm)" },
-  min_waist: { type: 'numeric', description: "The model's minimum waist measurement in centimeters (cm)" },
-  max_waist: { type: 'numeric', description: "The model's maximum waist measurement in centimeters (cm)" },
-  min_hips: { type: 'numeric', description: "The model's minimum hips measurement in centimeters (cm)" },
-  max_hips: { type: 'numeric', description: "The model's maximum hips measurement in centimeters (cm)" },
-  min_jeans_size: { type: 'numeric', description: "The model's minimum jeans size in UK size scale" },
-  max_jeans_size: { type: 'numeric', description: "The model's maximum jeans size in UK size scale" },
-  min_shoe_size: { type: 'numeric', description: "The model's minimum shoe size in UK size scale" },
-  max_shoe_size: { type: 'numeric', description: "The model's maximum shoe size in UK size scale" },
+  height: { type: 'numeric', description: "The model's height in centimeters (cm)" },
+  dress_size: { type: 'numeric', description: "The model's dress size in UK size scale" },
+  bra_size: { type: 'numeric', description: "The model's bra size in UK size scale" },
+  bikini_bottom_size: { type: 'numeric', description: "The model's bikini bottom size in UK size scale" },
+  chest_bust: { type: 'numeric', description: "The model's chest or bust measurement in centimeters (cm)" },
+  waist: { type: 'numeric', description: "The model's waist measurement in centimeters (cm)" },
+  hips: { type: 'numeric', description: "The model's hips measurement in centimeters (cm)" },
+  jeans_size: { type: 'numeric', description: "The model's jeans size in UK size scale" },
+  shoe_size: { type: 'numeric', description: "The model's shoe size in UK size scale" },
   instagram_account: { type: 'url', description: "The model's Instagram account URL" },
   model_board_category: { type: 'enum', description: "The category of the model's board", values: [
     'image','mainboard','a_new_face','development','non_binary_aka_x_division','direct','youth','classic','timeless','curve','teen','commercial','preview','verve','big_and_tall','a_family','couples','petite','lifestyle','fit','runway','streetcast','elite','premier'
@@ -384,15 +375,14 @@ function getSourceValueWithKey(row: Record<string, any>, fromSpec?: string | str
 }
 
 const CM_COLUMNS = new Set<string>([
-  'min_height', 'max_height',
-  'min_chest_bust', 'max_chest_bust',
-  'min_waist', 'max_waist',
-  'min_hips', 'max_hips',
+  'height',
+  'chest_bust',
+  'waist',
+  'hips',
 ])
 
 const SHOE_TRANSFORM_BY_COLUMN: Record<string, string> = {
-  min_shoe_size: 'toUkShoeMin',
-  max_shoe_size: 'toUkShoeMax',
+  shoe_size: 'toUkShoeMin',
 }
 
 function extractUrls(input: any): string[] {
