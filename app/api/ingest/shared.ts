@@ -301,6 +301,16 @@ export const SAFE_TRANSFORMS: Record<string, (value: any) => any> = {
     const r = parseUkShoeBounds(v)
     return r ? r.max : null
   },
+  stripModelingTerms: (v) => {
+    if (v == null) return v
+    if (typeof v !== 'string') return v
+    const cleaned = v
+      .replace(/\bmodel(ing)?\b/gi, '')
+      .replace(/\s{2,}/g, ' ')
+      .replace(/\s*([,;])\s*/g, '$1 ')
+      .trim()
+    return cleaned
+  },
 }
 
 export function applyTransform(value: any, transform?: string) {
@@ -635,7 +645,17 @@ export function applyMappingToRow(
     }
 
     const transformed = applyTransform(sourceVal, transformToApply)
-    const finalVal = transformed ?? (spec as any).default ?? null
+    let finalVal = transformed ?? (spec as any).default ?? null
+
+    // Clean hobby_interest_talent by removing generic "model/modeling" filler
+    if (table === 'models' && column === 'hobby_interest_talent') {
+      const cleaned = SAFE_TRANSFORMS.stripModelingTerms(finalVal)
+      if (typeof cleaned === 'string' && cleaned.trim() === '') {
+        finalVal = null
+      } else {
+        finalVal = cleaned
+      }
+    }
 
     if (table === 'models') models[column] = finalVal
     if (table === 'models_media') {
