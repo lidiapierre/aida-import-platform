@@ -131,9 +131,6 @@ function normalizeKey(key: string): string {
 
 function ensureShoeMapping(mapping: any, headers: string[]) {
   if (!mapping) return mapping
-  const hasShoeMapping = mapping.fieldMappings && mapping.fieldMappings['models.shoe_size']
-  if (hasShoeMapping) return mapping
-
   const shoeCandidates: string[] = []
   const normalizedHeaders = headers.map((h) => normalizeKey(String(h || '')))
   const possibleKeys = ['shoe', 'shoes', 'shoe_size', 'shoe_size_uk', 'shoe_size_eu', 'shoe_size_us', 'shoe size']
@@ -147,7 +144,17 @@ function ensureShoeMapping(mapping: any, headers: string[]) {
   if (!shoeCandidates.length) return mapping
 
   mapping.fieldMappings = mapping.fieldMappings || {}
-  mapping.fieldMappings['models.shoe_size'] = { from: Array.from(new Set(shoeCandidates)), transform: 'parseNumber' }
+  const existing = mapping.fieldMappings['models.shoe_size'] || {}
+  const existingFrom = existing.from
+  const mergedFrom = Array.from(
+    new Set(
+      [
+        ...(Array.isArray(existingFrom) ? existingFrom : existingFrom ? [existingFrom] : []),
+        ...shoeCandidates,
+      ].filter(Boolean)
+    )
+  )
+  mapping.fieldMappings['models.shoe_size'] = { from: mergedFrom, transform: 'parseNumber' }
   // Ensure models is included in targetTables
   if (Array.isArray(mapping.targetTables) && !mapping.targetTables.includes('models')) {
     mapping.targetTables.push('models')

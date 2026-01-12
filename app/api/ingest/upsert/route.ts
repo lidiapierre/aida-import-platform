@@ -4,6 +4,42 @@ import { inferGenderFromFilename, inferModelBoardFromFilename } from '../shared'
 import { dataSourceExists } from '../shared'
 import { ingestConfig } from '../config'
 
+function normalizeKey(key: string): string {
+  return key.toLowerCase().trim().replace(/\s+/g, '_').replace(/[-]+/g, '_')
+}
+
+function ensureShoeMapping(mapping: any, headers: string[]) {
+  if (!mapping) return mapping
+  const shoeCandidates: string[] = []
+  const normalizedHeaders = headers.map((h) => normalizeKey(String(h || '')))
+  const possibleKeys = ['shoe', 'shoes', 'shoe_size', 'shoe_size_uk', 'shoe_size_eu', 'shoe_size_us', 'shoe size']
+  for (let i = 0; i < normalizedHeaders.length; i++) {
+    const norm = normalizedHeaders[i]
+    if (possibleKeys.includes(norm)) {
+      shoeCandidates.push(headers[i])
+    }
+  }
+
+  if (!shoeCandidates.length) return mapping
+
+  mapping.fieldMappings = mapping.fieldMappings || {}
+  const existing = mapping.fieldMappings['models.shoe_size'] || {}
+  const existingFrom = (existing as any).from
+  const mergedFrom = Array.from(
+    new Set(
+      [
+        ...(Array.isArray(existingFrom) ? existingFrom : existingFrom ? [existingFrom] : []),
+        ...shoeCandidates,
+      ].filter(Boolean)
+    )
+  )
+  mapping.fieldMappings['models.shoe_size'] = { from: mergedFrom, transform: 'parseNumber' }
+  if (Array.isArray(mapping.targetTables) && !mapping.targetTables.includes('models')) {
+    mapping.targetTables.push('models')
+  }
+  return mapping
+}
+
 function isLikelyValidMediaLink(link: string): boolean {
   try {
     const u = new URL(link)
@@ -40,6 +76,8 @@ export async function POST(req: NextRequest) {
     const mapping = MappingSchema.parse(JSON.parse(mappingStr))
 
     const { rows } = await parseCsvAll(file)
+    const headerKeys = rows.length ? Object.keys(rows[0]) : []
+    const mappingWithFallbacks = ensureShoeMapping(mapping, headerKeys)
 
     const providedGenderRaw = String(formData.get('gender') || '').trim()
     const allowedGenders = (MODELS_FIELDS as any).gender.values as string[]
@@ -50,7 +88,7 @@ export async function POST(req: NextRequest) {
     }
     const inferredModelBoard = inferModelBoardFromFilename(dataSource)
 
-    const transformed = rows.map((row) => applyMappingToRow(row, mapping, { gender: inferredGender, modelBoard: inferredModelBoard || null, dataSource }))
+    const transformed = rows.map((row) => applyMappingToRow(row, mappingWithFallbacks, { gender: inferredGender, modelBoard: inferredModelBoard || null, dataSource }))
 
     const baseUrl = ingestConfig.baseUrl.replace(/\/$/, '')
 
