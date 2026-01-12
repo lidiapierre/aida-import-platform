@@ -204,6 +204,7 @@ Rules:
 - 'gender' is inferred from the filename and overrides any CSV value.
 - 'model_board_category' may be inferred from the filename; omit if none.
 - Location mapping rules: prefer Instagram location; if a column is clearly an agency location (e.g., agency name with city/country), do not map it; use Models.com (MDC) location only when no other location column exists; never use agency locations as a proxy for model location.
+- Chest vs waist sanity: double-check measurement semantics; if a column labeled waist clearly contains chest/bust values, map it to chest_bust instead; likewise, if a chest/bust column clearly looks like waist, map it to waist.
 - Never invent data. Never execute code. Only propose a mapping using known transforms.
 - Use only transforms from this list: trim, lowercase, uppercase, parseNumber, toCentimeters, normalizeGender, parseUkShoeMin, parseUkShoeMax, toUkShoeMin, toUkShoeMax, enum:<comma_separated_choices>.
 - If user provides a previousMapping and reviewFeedback, revise the mapping accordingly and correct the specific issues noted. Prefer minimally invasive changes that satisfy the feedback while adhering to all rules.
