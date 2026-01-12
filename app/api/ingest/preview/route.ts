@@ -125,6 +125,36 @@ function normalizeMappingShape(obj: any) {
   return copy
 }
 
+function normalizeKey(key: string): string {
+  return key.toLowerCase().trim().replace(/\s+/g, '_').replace(/[-]+/g, '_')
+}
+
+function ensureShoeMapping(mapping: any, headers: string[]) {
+  if (!mapping) return mapping
+  const hasShoeMapping = mapping.fieldMappings && mapping.fieldMappings['models.shoe_size']
+  if (hasShoeMapping) return mapping
+
+  const shoeCandidates: string[] = []
+  const normalizedHeaders = headers.map((h) => normalizeKey(String(h || '')))
+  const possibleKeys = ['shoe', 'shoes', 'shoe_size', 'shoe_size_uk', 'shoe_size_eu', 'shoe_size_us', 'shoe size']
+  for (let i = 0; i < normalizedHeaders.length; i++) {
+    const norm = normalizedHeaders[i]
+    if (possibleKeys.includes(norm)) {
+      shoeCandidates.push(headers[i])
+    }
+  }
+
+  if (!shoeCandidates.length) return mapping
+
+  mapping.fieldMappings = mapping.fieldMappings || {}
+  mapping.fieldMappings['models.shoe_size'] = { from: Array.from(new Set(shoeCandidates)), transform: 'parseNumber' }
+  // Ensure models is included in targetTables
+  if (Array.isArray(mapping.targetTables) && !mapping.targetTables.includes('models')) {
+    mapping.targetTables.push('models')
+  }
+  return mapping
+}
+
 async function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -274,7 +304,8 @@ Output format:
       const raw = content.text || ''
       const obj = extractJsonObject(raw)
       const normalized = normalizeMappingShape(obj)
-      mapping = MappingSchema.parse(normalized)
+      const withFallbacks = ensureShoeMapping(normalized, sample.headers || [])
+      mapping = MappingSchema.parse(withFallbacks)
     } catch (e: any) {
       return NextResponse.json({ success: false, message: 'Failed to parse mapping from Claude.', data: { error: String(e?.message || e), snippet: String(content.text || '').slice(0, 600) } }, { status: 500 })
     }
