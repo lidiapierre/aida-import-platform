@@ -56,6 +56,7 @@ export async function POST(req: NextRequest) {
 
     const allModelIds: Array<string | number> = []
     const upsertedModelIds: Array<string | number> = []
+    const potentialTwins: Array<{ modelId: string | number | null; potential_twins: any }> = []
     let processed = 0
     let succeeded = 0
     let failed = 0
@@ -107,6 +108,16 @@ export async function POST(req: NextRequest) {
           allModelIds.push(returnedId)
           upsertedModelIds.push(returnedId)
         }
+        const twinInfo = (json as any)?.potential_twins ?? (json as any)?.data?.potential_twins
+        if (twinInfo) {
+          potentialTwins.push({
+            modelId: returnedId ?? null,
+            potential_twins: {
+              group_id: twinInfo.group_id ?? twinInfo.groupId ?? null,
+              candidate_model_ids: twinInfo.candidate_model_ids ?? twinInfo.candidateModelIds ?? [],
+            },
+          })
+        }
       } catch {
         failed++
       }
@@ -115,7 +126,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       message: `Processed ${processed} models via external upsert (succeeded ${succeeded}, failed ${failed}, skipped ${skipped}).`,
-      data: { insertedModelIds: upsertedModelIds, allModelIds, modelIds: upsertedModelIds, warnings: { count: skipped, items: warnings } }
+      data: { insertedModelIds: upsertedModelIds, allModelIds, modelIds: upsertedModelIds, potentialTwins, warnings: { count: skipped, items: warnings } }
     })
   } catch (e: any) {
     return NextResponse.json({ success: false, message: e?.message || 'Internal error' }, { status: 500 })

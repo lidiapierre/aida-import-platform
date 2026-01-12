@@ -752,6 +752,30 @@ export default function Home() {
                   </div>
                 )
               })()}
+              {(() => {
+                const twins = Array.isArray(uploadResult.data?.potentialTwins) ? uploadResult.data.potentialTwins : []
+                if (!twins.length) return null
+                return (
+                  <div className="mt-4 text-xs">
+                    <div className="font-semibold text-gray-800">Potential twins</div>
+                    <div className="mt-2 space-y-2">
+                      {twins.map((t: any, idx: number) => {
+                        const candidates = Array.isArray(t?.potential_twins?.candidate_model_ids) ? t.potential_twins.candidate_model_ids : []
+                        return (
+                          <div key={`${t?.modelId ?? idx}`} className="p-2 rounded border border-blue-200 bg-blue-50">
+                            <div className="font-medium text-blue-900">
+                              model_id {String(t?.modelId ?? 'unknown')} • group {String(t?.potential_twins?.group_id ?? 'n/a')}
+                            </div>
+                            <div className="text-blue-800">
+                              Candidates: {candidates.length ? candidates.join(', ') : 'none'}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )
+              })()}
             </div>
           )}
 
