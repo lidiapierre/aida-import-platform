@@ -31,7 +31,9 @@ export const MODELS_FIELDS = {
   pronouns: { type: 'enum', description: "The model's preferred pronouns", values: ['they_them','he_him_his','she_her_hers','she_they','she_he'] },
   body_type: { type: 'array', description: 'List of text values representing attributes of the model\'s body type', values: ['petite','curve','plus_size','athletic','muscular'] },
   hobby_interest_talent: { type: 'text', description: "The model's hobbies, interests, or talents" },
-  location: { type: 'text', description: "The model's country, for example 'UK', 'USA', 'France' .." },
+  location: { type: 'text', description: "Model location priority: use Instagram location if present; never use agency/office locations (e.g., 'Fabbrica Milano Management (Milan) Italy'); use Models.com (MDC) location only if no other location column exists. Example values: 'UK', 'USA', 'France'." },
+  models_dot_com_profile: { type: 'text', description: 'Direct link to the model’s Models.com profile' },
+  mdc_achievements: { type: 'text', description: 'Achievements listed on the ModelsDotCom profile, e.g., Legends, Top 50, Hot List' },
   data_source: { type: 'text', description: 'The source of the data, for example the name of the .csv file used to ingest the data' },
 } as const
 
