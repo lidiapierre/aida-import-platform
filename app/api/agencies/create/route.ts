@@ -30,6 +30,7 @@ export async function POST(req: NextRequest) {
     const country = body?.country ? String(body.country).trim() : null
     const city = body?.city ? String(body.city).trim() : null
     const continent = body?.continent ? String(body.continent).trim() : null
+    const agencyTier = body?.agency_tier ? String(body.agency_tier).trim() : null
     const website = normalizeUrl(body?.website)
 
     if (!name) {
@@ -52,11 +53,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, message: 'An agency with a similar name already exists', data: existing[0] }, { status: 409 })
     }
 
-    const insert = { name, country, city, continent, website }
+    const insert = { name, country, city, continent, website, agency_tier: agencyTier }
     const { data, error } = await supabase
       .from('agencies')
       .insert(insert)
-      .select('id,name,country,city,continent,website')
+      .select('id,name,country,city,continent,website,agency_tier')
       .single()
 
     if (error) {

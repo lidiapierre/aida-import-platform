@@ -134,7 +134,8 @@ export default function Home() {
         return
       }
       setAgencySuggestions(json.data?.suggestions || [])
-      setProposedAgency(json.data?.proposedAgency || null)
+      const incomingProposed = json.data?.proposedAgency || null
+      setProposedAgency(incomingProposed ? { ...incomingProposed, agency_tier: incomingProposed.agency_tier || '' } : null)
     } catch (e) {
       setAgencySuggestions([])
       setProposedAgency(null)
@@ -152,12 +153,14 @@ export default function Home() {
     setCreatingAgency(true)
     setCreateAgencyError(null)
     try {
+      const agencyTier = proposedAgency?.agency_tier ? String(proposedAgency.agency_tier).trim() : ''
       const body = {
         name: proposedAgency?.name || '',
         country: proposedAgency?.country || null,
         city: proposedAgency?.city || null,
         continent: proposedAgency?.continent || null,
         website: proposedAgency?.website || null,
+        agency_tier: agencyTier || null,
       }
       const resp = await fetch('/api/agencies/create', {
         method: 'POST',
@@ -526,7 +529,7 @@ export default function Home() {
                     <button
                       type="button"
                       onClick={() => {
-                        if (!proposedAgency) setProposedAgency({ name: '', country: '', city: '', continent: '', website: '' })
+                        if (!proposedAgency) setProposedAgency({ name: '', country: '', city: '', continent: '', website: '', agency_tier: '' })
                         setShowAgencyCreateForm(true)
                       }}
                       className="inline-flex items-center text-xs text-green-700 hover:text-green-900"
@@ -587,6 +590,15 @@ export default function Home() {
                         value={proposedAgency.website || ''}
                         onChange={(e) => setProposedAgency({ ...proposedAgency, website: e.target.value })}
                         placeholder="https://example.com"
+                      />
+                    </div>
+                    <div>
+                      <div className="text-gray-700">Agency Tier (optional)</div>
+                      <input
+                        className="mt-1 w-full border rounded px-2 py-1 text-sm"
+                        value={proposedAgency.agency_tier || ''}
+                        onChange={(e) => setProposedAgency({ ...proposedAgency, agency_tier: e.target.value })}
+                        placeholder="e.g., boutique, global"
                       />
                     </div>
                   </div>
