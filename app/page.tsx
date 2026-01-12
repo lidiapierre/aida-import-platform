@@ -598,7 +598,7 @@ export default function Home() {
                         className="mt-1 w-full border rounded px-2 py-1 text-sm"
                         value={proposedAgency.agency_tier || ''}
                         onChange={(e) => setProposedAgency({ ...proposedAgency, agency_tier: e.target.value })}
-                        placeholder="e.g., boutique, global"
+                        placeholder="e.g. 1, 2, 3, etc."
                       />
                     </div>
                   </div>
