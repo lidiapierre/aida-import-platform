@@ -765,7 +765,12 @@ export default function Home() {
                 )
               })()}
               {(() => {
-                const twins = Array.isArray(uploadResult.data?.potentialTwins) ? uploadResult.data.potentialTwins : []
+                const twins = (Array.isArray(uploadResult.data?.potentialTwins) ? uploadResult.data.potentialTwins : []).filter((t: any) => {
+                  const groupId = t?.potential_twins?.group_id
+                  const candidates = Array.isArray(t?.potential_twins?.candidate_model_ids) ? t.potential_twins.candidate_model_ids : []
+                  // Only display if both group_id and candidate_model_ids are present and valid
+                  return groupId != null && candidates.length > 0
+                })
                 if (!twins.length) return null
                 return (
                   <div className="mt-4 text-xs">
@@ -779,7 +784,7 @@ export default function Home() {
                               model_id {String(t?.modelId ?? 'unknown')} • group {String(t?.potential_twins?.group_id ?? 'n/a')}
                             </div>
                             <div className="text-blue-800">
-                              Candidates: {candidates.length ? candidates.join(', ') : 'none'}
+                              Candidates: {candidates.join(', ')}
                             </div>
                           </div>
                         )
