@@ -101,6 +101,9 @@ export async function POST(req: NextRequest) {
     let skipped = 0
     const warnings: Array<{ rowIndex: number; reason: string }> = []
 
+    // Prepare all models for batching
+    const modelsToUpsert: Array<{ payload: any; rowIndex: number }> = []
+    
     for (let i = 0; i < transformed.length; i++) {
       const t = transformed[i]
       processed++
@@ -112,7 +115,6 @@ export async function POST(req: NextRequest) {
       if (nameEmpty && igEmpty) {
         skipped++
         warnings.push({ rowIndex: i + 1, reason: 'no model_name and no instagram_account' })
-        // treat as skipped, neither success nor failure
         continue
       }
 
@@ -122,42 +124,69 @@ export async function POST(req: NextRequest) {
         .filter((x: any) => typeof x === 'string' && x.trim() !== '')
         .filter((link: string) => isLikelyValidMediaLink(link))
 
-      // Prepare payload for external API per spec
+      // Prepare payload for batch API
       const payload: any = {
         record: model,
         agency_id: agencyIdStr,
       }
       if (modelMedia.length) payload.model_media = modelMedia
 
+      modelsToUpsert.push({ payload, rowIndex: i + 1 })
+    }
+
+    // Process in batches of 50 (or less) to balance speed vs reliability
+    const BATCH_SIZE = 50
+    for (let batchStart = 0; batchStart < modelsToUpsert.length; batchStart += BATCH_SIZE) {
+      const batch = modelsToUpsert.slice(batchStart, batchStart + BATCH_SIZE)
+      const batchPayloads = batch.map((m) => m.payload)
+
       try {
-        const resp = await fetch(`${baseUrl}/data_ingestion/upsert_model`, {
+        const resp = await fetch(`${baseUrl}/data_ingestion/batch_upsert_models`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
+          body: JSON.stringify({ models: batchPayloads }),
         })
         const json = await resp.json().catch(() => ({}))
+        
         if (!resp.ok || json?.success === false) {
-          failed++
+          // If batch fails, mark all as failed
+          failed += batch.length
           continue
         }
-        succeeded++
-        const returnedId = json?.model_id ?? json?.data?.model_id ?? json?.id ?? json?.data?.id
-        if (returnedId != null) {
-          allModelIds.push(returnedId)
-          upsertedModelIds.push(returnedId)
+
+        // Process batch results
+        // The response structure depends on your backend - adjust based on actual response format
+        const results = json?.data || json?.results || []
+        const batchResults = Array.isArray(results) ? results : []
+
+        for (let j = 0; j < batch.length; j++) {
+          const result = batchResults[j] || {}
+          const rowIndex = batch[j].rowIndex
+
+          if (result.success !== false) {
+            succeeded++
+            const returnedId = result?.model_id ?? result?.data?.model_id ?? result?.id ?? result?.data?.id
+            if (returnedId != null) {
+              allModelIds.push(returnedId)
+              upsertedModelIds.push(returnedId)
+            }
+            const twinInfo = result?.potential_twins ?? result?.data?.potential_twins
+            if (twinInfo) {
+              potentialTwins.push({
+                modelId: returnedId ?? null,
+                potential_twins: {
+                  group_id: twinInfo.group_id ?? twinInfo.groupId ?? null,
+                  candidate_model_ids: twinInfo.candidate_model_ids ?? twinInfo.candidateModelIds ?? [],
+                },
+              })
+            }
+          } else {
+            failed++
+          }
         }
-        const twinInfo = (json as any)?.potential_twins ?? (json as any)?.data?.potential_twins
-        if (twinInfo) {
-          potentialTwins.push({
-            modelId: returnedId ?? null,
-            potential_twins: {
-              group_id: twinInfo.group_id ?? twinInfo.groupId ?? null,
-              candidate_model_ids: twinInfo.candidate_model_ids ?? twinInfo.candidateModelIds ?? [],
-            },
-          })
-        }
-      } catch {
-        failed++
+      } catch (e) {
+        // If batch request fails, mark all in batch as failed
+        failed += batch.length
       }
     }
 
