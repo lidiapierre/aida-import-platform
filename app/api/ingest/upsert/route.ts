@@ -156,7 +156,7 @@ export async function POST(req: NextRequest) {
           continue
         }
 
-        // Process batch results - backend returns { results: [{status, result?, error?}, ...], success: count, errors: count, ... }
+        // Process batch results - backend returns { results: [{model_id, success, errors?, ...}, ...], ... }
         const batchResults = Array.isArray(json?.results) ? json.results : []
 
         for (let j = 0; j < batch.length; j++) {
@@ -167,44 +167,54 @@ export async function POST(req: NextRequest) {
 
           if (!resultItem) {
             failed++
-            continue
-          }
-
-          // Check status - "success" means it worked, anything else is a failure
-          if (resultItem.status === 'success' && resultItem.result) {
-            const result = resultItem.result
-            const returnedId = result?.model_id
-            
-            if (returnedId) {
-              succeeded++
-              allModelIds.push(returnedId)
-              upsertedModelIds.push(returnedId)
-
-              // Extract potential twins info if present
-              const twinInfo = result?.potential_twins
-              if (twinInfo && (twinInfo.group_id || (Array.isArray(twinInfo.candidate_model_ids) && twinInfo.candidate_model_ids.length > 0))) {
-                potentialTwins.push({
-                  modelId: returnedId,
-                  potential_twins: {
-                    group_id: twinInfo.group_id ?? null,
-                    candidate_model_ids: Array.isArray(twinInfo.candidate_model_ids) ? twinInfo.candidate_model_ids : [],
-                  },
-                })
-              }
-            } else {
-              failed++
-            }
-          } else if (resultItem.status === 'error') {
-            // Capture error from batch response
-            failed++
             failures.push({
               rowIndex,
               modelName,
-              error: resultItem.error || 'Unknown error',
+              error: 'No result returned from batch API',
             })
+            continue
+          }
+
+          // Check success flag - true means it worked, false means it failed
+          const isSuccess = resultItem.success === true
+          const returnedId = resultItem?.model_id
+
+          if (isSuccess && returnedId) {
+            succeeded++
+            allModelIds.push(returnedId)
+            upsertedModelIds.push(returnedId)
+
+            // Extract potential twins info if present
+            const twinInfo = resultItem?.potential_twins
+            if (twinInfo && (twinInfo.group_id || (Array.isArray(twinInfo.candidate_model_ids) && twinInfo.candidate_model_ids.length > 0))) {
+              potentialTwins.push({
+                modelId: returnedId,
+                potential_twins: {
+                  group_id: twinInfo.group_id ?? null,
+                  candidate_model_ids: Array.isArray(twinInfo.candidate_model_ids) ? twinInfo.candidate_model_ids : [],
+                },
+              })
+            }
           } else {
-            // status is something else or missing result
+            // Not successful - report errors if present
             failed++
+            const errors = resultItem?.errors
+            let errorMessage = 'Unknown error'
+            
+            if (errors && typeof errors === 'object' && Object.keys(errors).length > 0) {
+              // Report the full errors dict
+              errorMessage = JSON.stringify(errors, null, 2)
+            } else if (!isSuccess) {
+              errorMessage = 'Upsert failed (no errors dict provided)'
+            } else if (!returnedId) {
+              errorMessage = 'Upsert succeeded but no model_id returned'
+            }
+
+            failures.push({
+              rowIndex,
+              modelName,
+              error: errorMessage,
+            })
           }
         }
       } catch (e) {
