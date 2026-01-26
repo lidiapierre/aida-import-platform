@@ -765,6 +765,27 @@ export default function Home() {
                 )
               })()}
               {(() => {
+                const failures = Array.isArray(uploadResult.data?.failures?.items) ? uploadResult.data.failures.items : []
+                if (!failures.length) return null
+                return (
+                  <div className="mt-4 text-xs">
+                    <div className="font-semibold text-red-800">Failed Models ({failures.length})</div>
+                    <div className="mt-2 space-y-2">
+                      {failures.map((f: any, idx: number) => (
+                        <div key={`failure-${idx}`} className="p-2 rounded border border-red-200 bg-red-50">
+                          <div className="font-medium text-red-900">
+                            Row {f?.rowIndex ?? 'unknown'} • {f?.modelName ?? 'Unknown model'}
+                          </div>
+                          <div className="text-red-800 mt-1">
+                            {f?.error ?? 'Unknown error'}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })()}
+              {(() => {
                 const twins = (Array.isArray(uploadResult.data?.potentialTwins) ? uploadResult.data.potentialTwins : []).filter((t: any) => {
                   const groupId = t?.potential_twins?.group_id
                   const candidates = Array.isArray(t?.potential_twins?.candidate_model_ids) ? t.potential_twins.candidate_model_ids : []

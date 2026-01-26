@@ -100,9 +100,10 @@ export async function POST(req: NextRequest) {
     let failed = 0
     let skipped = 0
     const warnings: Array<{ rowIndex: number; reason: string }> = []
+    const failures: Array<{ rowIndex: number; modelName: string; error: string }> = []
 
     // Prepare all models for batching
-    const modelsToUpsert: Array<{ payload: any; rowIndex: number }> = []
+    const modelsToUpsert: Array<{ payload: any; rowIndex: number; modelName: string }> = []
     
     for (let i = 0; i < transformed.length; i++) {
       const t = transformed[i]
@@ -131,7 +132,8 @@ export async function POST(req: NextRequest) {
       }
       if (modelMedia.length) payload.model_media = modelMedia
 
-      modelsToUpsert.push({ payload, rowIndex: i + 1 })
+      const modelName = model?.model_name || model?.instagram_account || `Row ${i + 1}`
+      modelsToUpsert.push({ payload, rowIndex: i + 1, modelName: String(modelName) })
     }
 
     // Process in batches of 50 (or less) to balance speed vs reliability
@@ -159,7 +161,9 @@ export async function POST(req: NextRequest) {
 
         for (let j = 0; j < batch.length; j++) {
           const resultItem = batchResults[j]
-          const rowIndex = batch[j].rowIndex
+          const batchItem = batch[j]
+          const rowIndex = batchItem.rowIndex
+          const modelName = batchItem.modelName
 
           if (!resultItem) {
             failed++
@@ -190,8 +194,16 @@ export async function POST(req: NextRequest) {
             } else {
               failed++
             }
+          } else if (resultItem.status === 'error') {
+            // Capture error from batch response
+            failed++
+            failures.push({
+              rowIndex,
+              modelName,
+              error: resultItem.error || 'Unknown error',
+            })
           } else {
-            // status is "error" or missing result
+            // status is something else or missing result
             failed++
           }
         }
@@ -204,7 +216,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       message: `Processed ${processed} models via external upsert (succeeded ${succeeded}, failed ${failed}, skipped ${skipped}).`,
-      data: { insertedModelIds: upsertedModelIds, allModelIds, modelIds: upsertedModelIds, potentialTwins, warnings: { count: skipped, items: warnings } }
+      data: { 
+        insertedModelIds: upsertedModelIds, 
+        allModelIds, 
+        modelIds: upsertedModelIds, 
+        potentialTwins, 
+        warnings: { count: skipped, items: warnings },
+        failures: { count: failed, items: failures }
+      }
     })
   } catch (e: any) {
     return NextResponse.json({ success: false, message: e?.message || 'Internal error' }, { status: 500 })
