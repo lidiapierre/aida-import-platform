@@ -156,7 +156,7 @@ export async function POST(req: NextRequest) {
           continue
         }
 
-        // Process batch results - backend returns { results: [{model_id, success, errors?, ...}, ...], ... }
+        // Process batch results - backend returns { results: [{index, status, result: {model_id, success, errors?, ...}}, ...], ... }
         const batchResults = Array.isArray(json?.results) ? json.results : []
 
         for (let j = 0; j < batch.length; j++) {
@@ -165,7 +165,7 @@ export async function POST(req: NextRequest) {
           const rowIndex = batchItem.rowIndex
           const modelName = batchItem.modelName
 
-          if (!resultItem) {
+          if (!resultItem || !resultItem.result) {
             failed++
             failures.push({
               rowIndex,
@@ -175,9 +175,12 @@ export async function POST(req: NextRequest) {
             continue
           }
 
+          // Access nested result object
+          const result = resultItem.result
+          
           // Check success flag - true means it worked, false means it failed
-          const isSuccess = resultItem.success === true
-          const returnedId = resultItem?.model_id
+          const isSuccess = result.success === true
+          const returnedId = result?.model_id
 
           if (isSuccess && returnedId) {
             succeeded++
@@ -185,7 +188,7 @@ export async function POST(req: NextRequest) {
             upsertedModelIds.push(returnedId)
 
             // Extract potential twins info if present
-            const twinInfo = resultItem?.potential_twins
+            const twinInfo = result?.potential_twins
             if (twinInfo && (twinInfo.group_id || (Array.isArray(twinInfo.candidate_model_ids) && twinInfo.candidate_model_ids.length > 0))) {
               potentialTwins.push({
                 modelId: returnedId,
@@ -198,7 +201,7 @@ export async function POST(req: NextRequest) {
           } else {
             // Not successful - report errors if present
             failed++
-            const errors = resultItem?.errors
+            const errors = result?.errors
             let errorMessage = 'Unknown error'
             
             if (errors && typeof errors === 'object' && Object.keys(errors).length > 0) {
