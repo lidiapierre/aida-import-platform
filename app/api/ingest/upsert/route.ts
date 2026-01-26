@@ -154,38 +154,44 @@ export async function POST(req: NextRequest) {
           continue
         }
 
-        // Process batch results - backend returns { results: [...], success: count, errors: count, ... }
+        // Process batch results - backend returns { results: [{status, result?, error?}, ...], success: count, errors: count, ... }
         const batchResults = Array.isArray(json?.results) ? json.results : []
 
         for (let j = 0; j < batch.length; j++) {
-          const result = batchResults[j]
+          const resultItem = batchResults[j]
           const rowIndex = batch[j].rowIndex
 
-          if (!result) {
+          if (!resultItem) {
             failed++
             continue
           }
 
-          // Check if this result indicates success (model_id present means it was processed)
-          const returnedId = result?.model_id
-          if (returnedId) {
-            succeeded++
-            allModelIds.push(returnedId)
-            upsertedModelIds.push(returnedId)
+          // Check status - "success" means it worked, anything else is a failure
+          if (resultItem.status === 'success' && resultItem.result) {
+            const result = resultItem.result
+            const returnedId = result?.model_id
+            
+            if (returnedId) {
+              succeeded++
+              allModelIds.push(returnedId)
+              upsertedModelIds.push(returnedId)
 
-            // Extract potential twins info if present
-            const twinInfo = result?.potential_twins
-            if (twinInfo && (twinInfo.group_id || (Array.isArray(twinInfo.candidate_model_ids) && twinInfo.candidate_model_ids.length > 0))) {
-              potentialTwins.push({
-                modelId: returnedId,
-                potential_twins: {
-                  group_id: twinInfo.group_id ?? null,
-                  candidate_model_ids: Array.isArray(twinInfo.candidate_model_ids) ? twinInfo.candidate_model_ids : [],
-                },
-              })
+              // Extract potential twins info if present
+              const twinInfo = result?.potential_twins
+              if (twinInfo && (twinInfo.group_id || (Array.isArray(twinInfo.candidate_model_ids) && twinInfo.candidate_model_ids.length > 0))) {
+                potentialTwins.push({
+                  modelId: returnedId,
+                  potential_twins: {
+                    group_id: twinInfo.group_id ?? null,
+                    candidate_model_ids: Array.isArray(twinInfo.candidate_model_ids) ? twinInfo.candidate_model_ids : [],
+                  },
+                })
+              }
+            } else {
+              failed++
             }
           } else {
-            // No model_id means it failed
+            // status is "error" or missing result
             failed++
           }
         }
