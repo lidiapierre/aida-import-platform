@@ -104,7 +104,7 @@ export async function POST(req: NextRequest) {
 
     // Prepare all models for batching
     const modelsToUpsert: Array<{ payload: any; rowIndex: number; modelName: string }> = []
-    
+ 
     for (let i = 0; i < transformed.length; i++) {
       const t = transformed[i]
       processed++
@@ -136,93 +136,90 @@ export async function POST(req: NextRequest) {
       modelsToUpsert.push({ payload, rowIndex: i + 1, modelName: String(modelName) })
     }
 
-    // Process in batches of 50 (or less) to balance speed vs reliability
-    const BATCH_SIZE = 50
-    for (let batchStart = 0; batchStart < modelsToUpsert.length; batchStart += BATCH_SIZE) {
-      const batch = modelsToUpsert.slice(batchStart, batchStart + BATCH_SIZE)
-      const batchPayloads = batch.map((m) => m.payload)
+    // Process models one-by-one via /upsert_model
+    for (const item of modelsToUpsert) {
+      const { payload, rowIndex, modelName } = item
 
       try {
-        const resp = await fetch(`${baseUrl}/data_ingestion/batch_upsert_models`, {
+        const resp = await fetch(`${baseUrl}/data_ingestion/upsert_model`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ models: batchPayloads }),
+          body: JSON.stringify(payload),
         })
+
         const json = await resp.json().catch(() => ({}))
-        
+
         if (!resp.ok) {
-          // If batch fails, mark all as failed
-          failed += batch.length
+          failed++
+          const errorMessage =
+            (json && (json as any).message) ||
+            `HTTP ${resp.status} when upserting model`
+
+          failures.push({
+            rowIndex,
+            modelName,
+            error: errorMessage,
+          })
           continue
         }
 
-        // Process batch results - backend returns { results: [{index, status, result: {model_id, success, errors?, ...}}, ...], ... }
-        const batchResults = Array.isArray(json?.results) ? json.results : []
+        // Endpoint returns a single result dict like:
+        // {
+        //   model_id, success, errors, dedupe_status, candidates,
+        //   review_results, merges, original_model_id, potential_twins
+        // }
+        const result = json as any
+        const isSuccess = result?.success === true
+        const returnedId = result?.model_id
 
-        for (let j = 0; j < batch.length; j++) {
-          const resultItem = batchResults[j]
-          const batchItem = batch[j]
-          const rowIndex = batchItem.rowIndex
-          const modelName = batchItem.modelName
+        if (isSuccess && returnedId) {
+          succeeded++
+          allModelIds.push(returnedId)
+          upsertedModelIds.push(returnedId)
 
-          if (!resultItem || !resultItem.result) {
-            failed++
-            failures.push({
-              rowIndex,
-              modelName,
-              error: 'No result returned from batch API',
-            })
-            continue
-          }
-
-          // Access nested result object
-          const result = resultItem.result
-          
-          // Check success flag - true means it worked, false means it failed
-          const isSuccess = result.success === true
-          const returnedId = result?.model_id
-
-          if (isSuccess && returnedId) {
-            succeeded++
-            allModelIds.push(returnedId)
-            upsertedModelIds.push(returnedId)
-
-            // Extract potential twins info if present
-            const twinInfo = result?.potential_twins
-            if (twinInfo && (twinInfo.group_id || (Array.isArray(twinInfo.candidate_model_ids) && twinInfo.candidate_model_ids.length > 0))) {
-              potentialTwins.push({
-                modelId: returnedId,
-                potential_twins: {
-                  group_id: twinInfo.group_id ?? null,
-                  candidate_model_ids: Array.isArray(twinInfo.candidate_model_ids) ? twinInfo.candidate_model_ids : [],
-                },
-              })
-            }
-          } else {
-            // Not successful - report errors if present
-            failed++
-            const errors = result?.errors
-            let errorMessage = 'Unknown error'
-            
-            if (errors && typeof errors === 'object' && Object.keys(errors).length > 0) {
-              // Report the full errors dict
-              errorMessage = JSON.stringify(errors, null, 2)
-            } else if (!isSuccess) {
-              errorMessage = 'Upsert failed (no errors dict provided)'
-            } else if (!returnedId) {
-              errorMessage = 'Upsert succeeded but no model_id returned'
-            }
-
-            failures.push({
-              rowIndex,
-              modelName,
-              error: errorMessage,
+          const twinInfo = result?.potential_twins
+          if (
+            twinInfo &&
+            (twinInfo.group_id ||
+              (Array.isArray(twinInfo.candidate_model_ids) &&
+                twinInfo.candidate_model_ids.length > 0))
+          ) {
+            potentialTwins.push({
+              modelId: returnedId,
+              potential_twins: {
+                group_id: twinInfo.group_id ?? null,
+                candidate_model_ids: Array.isArray(twinInfo.candidate_model_ids)
+                  ? twinInfo.candidate_model_ids
+                  : [],
+              },
             })
           }
+        } else {
+          failed++
+          const errors = result?.errors
+          let errorMessage = 'Unknown error'
+
+          if (errors && typeof errors === 'object' && Object.keys(errors).length > 0) {
+            errorMessage = JSON.stringify(errors, null, 2)
+          } else if (!isSuccess) {
+            errorMessage = 'Upsert failed (no errors dict provided)'
+          } else if (!returnedId) {
+            errorMessage = 'Upsert succeeded but no model_id returned'
+          }
+
+          failures.push({
+            rowIndex,
+            modelName,
+            error: errorMessage,
+          })
         }
-      } catch (e) {
-        // If batch request fails, mark all in batch as failed
-        failed += batch.length
+      } catch (e: any) {
+        failed++
+        failures.push({
+          rowIndex,
+          modelName,
+          error: e?.message || 'Network or server error during upsert',
+        })
       }
     }
 
