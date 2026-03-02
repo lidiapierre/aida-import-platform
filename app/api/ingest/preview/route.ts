@@ -267,7 +267,7 @@ Output format:
     try {
       msg = await withRetries(
         () => anthropic.messages.create({
-          model: 'claude-4-6-sonnet-latest',
+          model: 'claude-sonnet-4-6',
           max_tokens: 2000,
           temperature: 0,
           system,
