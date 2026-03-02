@@ -108,7 +108,7 @@ If you cannot infer a value, set it to null. Do not invent facts.`
     let proposedAgency: any = { name: null, country: null, city: null, continent: null, website: null }
     try {
       const msg = await anthropic.messages.create({
-        model: 'claude-3-7-sonnet-latest',
+        model: 'claude-4-6-sonnet-latest',
         max_tokens: 800,
         temperature: 0,
         system,
