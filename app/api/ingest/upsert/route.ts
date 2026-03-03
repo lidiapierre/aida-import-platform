@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { MappingSchema, parseCsvAll, applyMappingToRow, MODELS_FIELDS } from '../shared'
-import { inferGenderFromFilename, inferModelBoardFromFilename } from '../shared'
+import { inferGenderFromFilename } from '../shared'
 import { dataSourceExists } from '../shared'
 import { ingestConfig } from '../config'
 
@@ -86,9 +86,18 @@ export async function POST(req: NextRequest) {
     if (!inferredGender) {
       return NextResponse.json({ success: false, message: 'Could not infer gender from filename. Include a clear indicator such as girls, boys, men, women, female, male, transgender, non-binary, transman, or transwoman.' }, { status: 400 })
     }
-    const inferredModelBoard = inferModelBoardFromFilename(dataSource)
 
-    const transformed = rows.map((row) => applyMappingToRow(row, mappingWithFallbacks, { gender: inferredGender, modelBoard: inferredModelBoard || null, dataSource }))
+    const providedBoardRaw = String(formData.get('model_board_category') || '').trim()
+    const allowedBoards = (MODELS_FIELDS as any).model_board_category.values as string[]
+    const providedModelBoard = allowedBoards.includes(providedBoardRaw) ? providedBoardRaw : null
+
+    const transformed = rows.map((row) =>
+      applyMappingToRow(row, mappingWithFallbacks, {
+        gender: inferredGender,
+        modelBoard: providedModelBoard || null,
+        dataSource,
+      })
+    )
 
     const baseUrl = ingestConfig.baseUrl.replace(/\/$/, '')
 

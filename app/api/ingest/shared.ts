@@ -1,6 +1,7 @@
 import Papa from 'papaparse'
 import { z } from 'zod'
 import { createClient } from '@supabase/supabase-js'
+import { MODEL_BOARD_CATEGORIES } from '../../../lib/modelBoardCategories'
 
 export const MODELS_FIELDS = {
   model_name: { type: 'text' },
@@ -17,9 +18,7 @@ export const MODELS_FIELDS = {
   jeans_size: { type: 'numeric', description: "The model's jeans size in UK size scale" },
   shoe_size: { type: 'numeric', description: "The model's shoe size in UK size scale" },
   instagram_account: { type: 'url', description: "The model's Instagram account URL" },
-  model_board_category: { type: 'enum', description: "The category of the model's board", values: [
-    'image','mainboard','a_new_face','development','non_binary_aka_x_division','direct','youth','classic','timeless','curve','teen','commercial','preview','verve','big_and_tall','a_family','couples','petite','lifestyle','fit','runway','streetcast','elite','premier'
-  ] },
+  model_board_category: { type: 'enum', description: "The category of the model's board", values: MODEL_BOARD_CATEGORIES },
   hair_colour: { type: 'enum', description: "The model's hair colour", values: [
     'platinum_blonde','ash_blonde','sandy_blonde','strawberry_blonde','honey_blonde','black','grey','yellow','green','blue','purple','lavender','emerald_green','rose_gold','dark_brown','medium_brown','light_brown','chestnut_brown','golden_brown','ash_brown','reddish_brown','mahogany_brown','blonde','dirty_blonde','light_blonde','medium_blonde','dark_blonde','red','copper_red','ginger_red','auburn','deep_red','strawberry_red','white','silver_gray','salt_and_pepper','steel_gray','orange','purple','lavender','lilac','magenta','electric_blue','turquoise','teal','aqua','sky_blue','mint_green','neon_green','pastel_pink','flamingo_pink','hot_pink','burgundy','wine_red','blood_red','platinum_silver','gunmetal_gray','chestnut'
   ] },

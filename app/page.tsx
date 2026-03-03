@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useRef } from 'react'
 import { Upload, FileText, CheckCircle, AlertCircle, Loader2, Plus, Globe } from 'lucide-react'
+import { MODEL_BOARD_CATEGORIES } from '../lib/modelBoardCategories'
 
 interface UploadResponse {
   success: boolean
@@ -21,6 +22,8 @@ export default function Home() {
   const [selectedAgencyId, setSelectedAgencyId] = useState<number | null>(null)
   const [selectedGender, setSelectedGender] = useState<string | null>(null)
   const [showGenderPicker, setShowGenderPicker] = useState<boolean>(false)
+  const [selectedModelBoard, setSelectedModelBoard] = useState<string | null>(null)
+  const [isInferringBoard, setIsInferringBoard] = useState<boolean>(false)
   const [isSuggestingAgency, setIsSuggestingAgency] = useState(false)
   const [creatingAgency, setCreatingAgency] = useState<boolean>(false)
   const [createAgencyError, setCreateAgencyError] = useState<string | null>(null)
@@ -60,6 +63,26 @@ export default function Home() {
     }
   }, [])
 
+  const inferModelBoard = useCallback(async (csv: File) => {
+    setIsInferringBoard(true)
+    try {
+      const form = new FormData()
+      form.append('file', csv)
+      const resp = await fetch('/api/ingest/infer-board', { method: 'POST', body: form })
+      const json = await resp.json()
+      if (resp.ok && json?.success) {
+        const inferred = json.data?.inferred || null
+        setSelectedModelBoard(inferred)
+      } else {
+        setSelectedModelBoard(null)
+      }
+    } catch {
+      setSelectedModelBoard(null)
+    } finally {
+      setIsInferringBoard(false)
+    }
+  }, [])
+
   const handleFileSelect = useCallback((selectedFile: File) => {
     if (selectedFile.type === 'text/csv' || selectedFile.name.endsWith('.csv')) {
       setFile(selectedFile)
@@ -86,13 +109,16 @@ export default function Home() {
         : null
       setSelectedGender(guess)
       setShowGenderPicker(!guess)
+      setSelectedModelBoard(null)
       setFeedback('')
       // New: check data_source existence early
       checkDataSource(selectedFile)
+      // Infer model board category from filename via server-side AI
+      inferModelBoard(selectedFile)
     } else {
       setUploadResult({ success: false, message: 'Please select a valid CSV file' })
     }
-  }, [checkDataSource])
+  }, [checkDataSource, inferModelBoard])
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -210,6 +236,7 @@ export default function Home() {
       const formData = new FormData()
       formData.append('file', file)
       if (selectedGender) formData.append('gender', selectedGender)
+      if (selectedModelBoard) formData.append('model_board_category', selectedModelBoard)
 
       // Step 1: ask server to parse a sample and get agent-proposed mapping preview
       const previewResp = await fetch('/api/ingest/preview', { method: 'POST', body: formData })
@@ -251,6 +278,7 @@ export default function Home() {
       formData.append('file', file)
       formData.append('mapping', JSON.stringify(preview.mapping))
       if (selectedGender) formData.append('gender', selectedGender)
+      if (selectedModelBoard) formData.append('model_board_category', selectedModelBoard)
       if (selectedAgencyId != null) formData.append('agency_id', String(selectedAgencyId))
 
       const resp = await fetch('/api/ingest/upsert', {
@@ -345,6 +373,7 @@ export default function Home() {
       const formData = new FormData()
       formData.append('file', file)
       if (selectedGender) formData.append('gender', selectedGender)
+      if (selectedModelBoard) formData.append('model_board_category', selectedModelBoard)
       if (feedback) formData.append('feedback', feedback)
       if (preview?.mapping) formData.append('previous_mapping', JSON.stringify(preview.mapping))
 
@@ -655,6 +684,29 @@ export default function Home() {
                 </select>
               </div>
             )}
+
+            {/* Model board selection */}
+            <div className="space-y-2 mt-4">
+              <label className="block text-sm font-medium text-gray-700">Model board</label>
+              <select
+                className="w-full border rounded px-2 py-2 text-sm"
+                value={selectedModelBoard || ''}
+                onChange={(e) => {
+                  const v = e.target.value || null
+                  setSelectedModelBoard(v)
+                }}
+              >
+                <option value="">Select model board…</option>
+                {MODEL_BOARD_CATEGORIES.map((cat) => (
+                  <option key={cat} value={cat}>
+                    {cat}
+                  </option>
+                ))}
+              </select>
+              {isInferringBoard && (
+                <div className="text-xs text-gray-500">Inferring model board from filename…</div>
+              )}
+            </div>
 
             {/* Submit Button */}
             <button

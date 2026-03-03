@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { MappingSchema, parseCsvSample, MODELS_FIELDS, MODELS_MEDIA_FIELDS, applyMappingToRow } from '../shared'
-import { inferGenderFromFilename, inferModelBoardFromFilename } from '../shared'
+import { inferGenderFromFilename } from '../shared'
 import { dataSourceExists } from '../shared'
 
 export const runtime = 'nodejs'
@@ -205,9 +205,13 @@ export async function POST(req: NextRequest) {
     const providedGenderRaw = String(formData.get('gender') || '').trim()
     const allowedGenders = (MODELS_FIELDS as any).gender.values as string[]
     const providedGender = allowedGenders.includes(providedGenderRaw) ? providedGenderRaw : null
+    // Allow client override for model_board_category if provided
+    const providedBoardRaw = String(formData.get('model_board_category') || '').trim()
+    const allowedBoards = (MODELS_FIELDS as any).model_board_category.values as string[]
+    const providedModelBoard = allowedBoards.includes(providedBoardRaw) ? providedBoardRaw : null
 
     const inferredGender = providedGender || inferGenderFromFilename(dataSourceName)
-    const inferredModelBoard = inferModelBoardFromFilename(dataSourceName)
+    const inferredModelBoard = providedModelBoard
 
     // Optional iterative feedback inputs
     const reviewFeedback = String(formData.get('feedback') || '').trim()

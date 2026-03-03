@@ -1,0 +1,31 @@
+export const MODEL_BOARD_CATEGORIES = [
+  'image',
+  'mainboard',
+  'a_new_face',
+  'development',
+  'non_binary_aka_x_division',
+  'direct',
+  'youth',
+  'classic',
+  'timeless',
+  'curve',
+  'teen',
+  'commercial',
+  'preview',
+  'verve',
+  'big_and_tall',
+  'a_family',
+  'couples',
+  'petite',
+  'lifestyle',
+  'fit',
+  'runway',
+  'streetcast',
+  'elite',
+  'premier',
+  'curve mainboard',
+  'curve new faces',
+] as const
+
+export type ModelBoardCategory = (typeof MODEL_BOARD_CATEGORIES)[number]
+
