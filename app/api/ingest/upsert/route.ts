@@ -135,11 +135,13 @@ export async function POST(req: NextRequest) {
         .filter((link: string) => isLikelyValidMediaLink(link))
 
       // Prepare payload for batch API
+      const generateEmbeddings = String(formData.get('generate_embeddings') || '').toLowerCase() === 'true'
       const payload: any = {
         record: model,
         agency_id: agencyIdStr,
       }
       if (modelMedia.length) payload.model_media = modelMedia
+      if (generateEmbeddings) payload.generate_embeddings = true
 
       const modelName = model?.model_name || model?.instagram_account || `Row ${i + 1}`
       modelsToUpsert.push({ payload, rowIndex: i + 1, modelName: String(modelName) })

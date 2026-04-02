@@ -14,9 +14,10 @@ export async function POST(req: NextRequest) {
     }
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL as string
-    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY as string
+    // Support both legacy SUPABASE_SERVICE_ROLE_KEY and new sb_secret_ format key
+    const supabaseKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY) as string
     if (!supabaseUrl || !supabaseKey) {
-      return NextResponse.json({ success: false, message: 'Supabase environment variables are not set' }, { status: 500 })
+      return NextResponse.json({ success: false, message: 'Supabase environment variables are not set (SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SECRET_KEY required)' }, { status: 500 })
     }
     const supabase = createClient(supabaseUrl, supabaseKey)
 
@@ -50,29 +51,32 @@ export async function POST(req: NextRequest) {
         if (mediaErr) return { model_id: modelId, success: false, message: `Failed to check medias: ${mediaErr.message}` }
         if ((mediaCount || 0) === 0) return { model_id: modelId, success: true, skipped: true, reason: 'no medias for model', didUpdateModel: false, didUpdatePhotos: false }
 
+        // Note: update_model and update_model_photos return 202 Accepted immediately.
+        // The actual CV inference runs in the background on the API server.
+        // didUpdateModel/didUpdatePhotos = true means the job was successfully queued.
         let didUpdateModel = false
         if (modelRow.cv_infer !== true) {
           const url = `${baseUrl}/data_ingestion/update_model/${encodeURIComponent(modelId)}?${query.toString()}`
           try {
             const resp = await fetch(url, { method: 'POST' })
-            didUpdateModel = resp.ok
+            // 202 Accepted = queued successfully (also covers legacy 200)
+            didUpdateModel = resp.status === 202 || resp.status === 200
           } catch {}
         }
 
         let didUpdatePhotos = false
         try {
           const photosUrl = `${baseUrl}/data_ingestion/update_model_photos`
-          const photosResp = await fetch(photosUrl, { 
+          const photosResp = await fetch(photosUrl, {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ model_id: modelId, claude: true })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model_id: modelId })
           })
-          didUpdatePhotos = photosResp.ok
+          // 202 Accepted = queued successfully (also covers legacy 200)
+          didUpdatePhotos = photosResp.status === 202 || photosResp.status === 200
         } catch {}
 
-        return { model_id: modelId, success: true, skipped: false, didUpdateModel, didUpdatePhotos }
+        return { model_id: modelId, success: true, skipped: false, queued: true, didUpdateModel, didUpdatePhotos }
       } catch (err: any) {
         return { model_id: modelId, success: false, message: err?.message || 'Unexpected error' }
       }

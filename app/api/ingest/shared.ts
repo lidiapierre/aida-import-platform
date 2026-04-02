@@ -702,7 +702,8 @@ export function applyMappingToRow(
 
 export async function dataSourceExists(dataSource: string): Promise<boolean> {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL as string
-  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY as string
+  // Support both legacy SUPABASE_SERVICE_ROLE_KEY and new sb_secret_ format key
+  const supabaseKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY) as string
   if (!supabaseUrl || !supabaseKey) return false
   const supabase = createClient(supabaseUrl, supabaseKey)
   const { count, error } = await supabase
