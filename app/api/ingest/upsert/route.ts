@@ -104,6 +104,16 @@ export async function POST(req: NextRequest) {
     const allModelIds: Array<string | number> = []
     const upsertedModelIds: Array<string | number> = []
     const potentialTwins: Array<{ modelId: string | number | null; potential_twins: any }> = []
+    const successes: Array<{
+      rowIndex: number
+      modelName: string
+      modelId: string | number
+      outcome: 'inserted' | 'merged' | 'updated'
+      dedupeStatus: string | null
+      originalModelId: string | number | null
+      mergedIntoModelId: string | number | null
+      mergedFromModelIds: Array<string | number>
+    }> = []
     let processed = 0
     let succeeded = 0
     let failed = 0
@@ -180,13 +190,38 @@ export async function POST(req: NextRequest) {
         //   review_results, merges, original_model_id, potential_twins
         // }
         const result = json as any
-        const isSuccess = result?.success === true
         const returnedId = result?.model_id
+        const merges = Array.isArray(result?.merges) ? result.merges : []
+        const successfulMerges = merges.filter((merge: any) => merge?.success !== false)
+        const mergedFromModelIds = successfulMerges
+          .map((merge: any) => merge?.source_model_id ?? merge?.merged_model_id ?? merge?.from_model_id)
+          .filter((id: any) => id != null)
+        const dedupeStatus = typeof result?.dedupe_status === 'string' ? result.dedupe_status : null
+        const hasErrors = !!(result?.errors && typeof result.errors === 'object' && Object.keys(result.errors).length > 0)
+        const hasReturnedId = returnedId != null && returnedId !== ''
+        const isEffectiveSuccess = hasReturnedId && !hasErrors
 
-        if (isSuccess && returnedId) {
+        if (isEffectiveSuccess) {
           succeeded++
           allModelIds.push(returnedId)
           upsertedModelIds.push(returnedId)
+
+          const outcome: 'inserted' | 'merged' | 'updated' = mergedFromModelIds.length > 0
+            ? 'merged'
+            : dedupeStatus === 'matched_existing' || dedupeStatus === 'updated_existing'
+            ? 'updated'
+            : 'inserted'
+
+          successes.push({
+            rowIndex,
+            modelName,
+            modelId: returnedId,
+            outcome,
+            dedupeStatus,
+            originalModelId: result?.original_model_id ?? null,
+            mergedIntoModelId: outcome === 'merged' ? returnedId : null,
+            mergedFromModelIds,
+          })
 
           const twinInfo = result?.potential_twins
           if (
@@ -212,10 +247,10 @@ export async function POST(req: NextRequest) {
 
           if (errors && typeof errors === 'object' && Object.keys(errors).length > 0) {
             errorMessage = JSON.stringify(errors, null, 2)
-          } else if (!isSuccess) {
+          } else if (!hasReturnedId) {
+            errorMessage = 'Upsert failed: backend did not return a model_id'
+          } else {
             errorMessage = 'Upsert failed (no errors dict provided)'
-          } else if (!returnedId) {
-            errorMessage = 'Upsert succeeded but no model_id returned'
           }
 
           failures.push({
@@ -241,6 +276,7 @@ export async function POST(req: NextRequest) {
         insertedModelIds: upsertedModelIds, 
         allModelIds, 
         modelIds: upsertedModelIds, 
+        successes: { count: succeeded, items: successes },
         potentialTwins, 
         warnings: { count: skipped, items: warnings },
         failures: { count: failed, items: failures }

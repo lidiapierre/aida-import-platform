@@ -10,6 +10,19 @@ interface UploadResponse {
   data?: any
 }
 
+function formatOutcomeLabel(outcome: string | null | undefined) {
+  switch (outcome) {
+    case 'merged':
+      return 'Merged'
+    case 'updated':
+      return 'Updated'
+    case 'inserted':
+      return 'Inserted'
+    default:
+      return 'Succeeded'
+  }
+}
+
 export default function Home() {
   const [file, setFile] = useState<File | null>(null)
   const [isUploading, setIsUploading] = useState(false)
@@ -803,7 +816,7 @@ export default function Home() {
                 // Hide modelIds on success
                 const dataToShow = uploadResult.success
                   ? (() => {
-                      const { modelIds, ...rest } = uploadResult.data || {}
+                      const { modelIds, successes, ...rest } = uploadResult.data || {}
                       return Object.keys(rest || {}).length ? rest : null
                     })()
                   : uploadResult.data
@@ -813,6 +826,40 @@ export default function Home() {
                     <pre className="whitespace-pre-wrap">
                       {JSON.stringify(dataToShow, null, 2)}
                     </pre>
+                  </div>
+                )
+              })()}
+              {(() => {
+                const successes = Array.isArray(uploadResult.data?.successes?.items) ? uploadResult.data.successes.items : []
+                if (!successes.length) return null
+                return (
+                  <div className="mt-4 text-xs">
+                    <div className="font-semibold text-green-800">Successful Models ({successes.length})</div>
+                    <div className="mt-2 space-y-2">
+                      {successes.map((s: any, idx: number) => {
+                        const mergedFrom = Array.isArray(s?.mergedFromModelIds) ? s.mergedFromModelIds : []
+                        return (
+                          <div key={`success-${idx}`} className="p-2 rounded border border-green-200 bg-green-50">
+                            <div className="font-medium text-green-900">
+                              Row {s?.rowIndex ?? 'unknown'} • {s?.modelName ?? 'Unknown model'}
+                            </div>
+                            <div className="text-green-800 mt-1">
+                              {formatOutcomeLabel(s?.outcome)} as model_id {String(s?.modelId ?? 'unknown')}
+                            </div>
+                            {s?.dedupeStatus && (
+                              <div className="text-green-700 mt-1">
+                                Dedupe status: {String(s.dedupeStatus)}
+                              </div>
+                            )}
+                            {mergedFrom.length > 0 && (
+                              <div className="text-green-700 mt-1">
+                                Merged models: {mergedFrom.join(', ')}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
                   </div>
                 )
               })()}
